@@ -1,0 +1,6 @@
+node_modules/
+.next/
+data/mock.db
+uploads/*
+!uploads/.gitkeep
+.env

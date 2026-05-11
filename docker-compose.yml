@@ -1,0 +1,14 @@
+services:
+  mock-api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - JWT_SECRET=mock-secret-key
+      - JWT_EXPIRES_IN=7d
+      - JWT_REFRESH_EXPIRES_IN=30d
+      - MOCK_DELAY=0
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    restart: unless-stopped
