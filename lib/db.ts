@@ -86,6 +86,33 @@ function initTables(db: Database.Database) {
       user_id TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS chat_rooms (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      type TEXT DEFAULT 'private' CHECK(type IN ('private', 'group')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_room_members (
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      joined_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (room_id, user_id),
+      FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      type TEXT DEFAULT 'text' CHECK(type IN ('text', 'image', 'file')),
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 }
 

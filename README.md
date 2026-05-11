@@ -5,6 +5,7 @@ Mock backend untuk kebutuhan tim mobile development.
 ## Tech Stack
 - **Next.js 14** (App Router + Route Handlers)
 - **TypeScript**
+- **Socket.IO** (WebSocket real-time)
 - **better-sqlite3** (lightweight database)
 - **jsonwebtoken** (auth mock)
 - **@faker-js/faker** (data generator)
@@ -21,7 +22,8 @@ npm run seed
 # Jalankan development server
 npm run dev
 
-# API tersedia di http://localhost:3000/api
+# REST API  → http://localhost:3000/api
+# WebSocket → ws://localhost:3000
 ```
 
 ## Docker
@@ -34,7 +36,8 @@ docker-compose up -d
 ## Base URL
 
 ```
-Development : http://localhost:3000/api
+REST API   : http://localhost:3000/api
+WebSocket  : ws://localhost:3000
 ```
 
 ## API Documentation
@@ -75,6 +78,77 @@ Development : http://localhost:3000/api
 | Method | Endpoint | Description |
 |--------|----------------------|--------------------------|
 | POST | /api/upload | Upload file |
+
+### Chat (REST)
+| Method | Endpoint | Description |
+|--------|--------------------------------------|--------------------------|
+| GET | /api/chat/rooms | List user's chat rooms |
+| POST | /api/chat/rooms | Create chat room |
+| GET | /api/chat/rooms/:id/messages | Get chat history |
+
+### WebSocket Trigger (REST → WS)
+| Method | Endpoint | Description |
+|--------|----------------------|--------------------------------------|
+| POST | /api/ws/emit | Trigger WS events from REST/Postman |
+
+## WebSocket Events
+
+### Connection
+```javascript
+import { io } from 'socket.io-client';
+
+const socket = io('ws://localhost:3000', {
+  auth: { token: '<access_token>' }
+});
+```
+
+### Chat
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| chat:join | Client → Server | `{ room_id }` |
+| chat:leave | Client → Server | `{ room_id }` |
+| chat:send | Client → Server | `{ room_id, content, type? }` |
+| chat:typing | Client → Server | `{ room_id, is_typing }` |
+| chat:read | Client → Server | `{ room_id, last_read_message_id }` |
+| chat:message | Server → Client | `{ id, room_id, sender_id, content, ... }` |
+| chat:history | Server → Client | `{ room_id, messages[] }` |
+| chat:typing | Server → Client | `{ room_id, user_id, is_typing }` |
+| chat:read_receipt | Server → Client | `{ room_id, user_id, last_read_message_id }` |
+| chat:user_joined | Server → Client | `{ room_id, user_id, user_name }` |
+| chat:user_left | Server → Client | `{ room_id, user_id, user_name }` |
+
+### Notifications (Real-time)
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| notification:subscribe | Client → Server | `{ channels: ['promo','order',...] }` |
+| notification:new | Server → Client | `{ id, title, body, type, data }` |
+
+### Presence (Online/Offline)
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| presence:get_online | Client → Server | — |
+| presence:ping | Client → Server | — |
+| presence:update | Server → Client | `{ user_id, status, online_users[] }` |
+| presence:online_list | Server → Client | `{ online_users[], count }` |
+
+### Live Location
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| location:update | Client → Server | `{ latitude, longitude }` |
+| location:track | Client → Server | `{ user_id }` |
+| location:untrack | Client → Server | `{ user_id }` |
+| location:updated | Server → Client | `{ user_id, latitude, longitude, timestamp }` |
+
+### Order Tracking
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| order:subscribe | Client → Server | `{ order_id }` |
+| order:unsubscribe | Client → Server | `{ order_id }` |
+| order:status_update | Server → Client | `{ order_id, status, message, timestamp }` |
+
+### Auto Simulators
+- Mock notification dikirim setiap **30 detik** ke subscribed channels
+- Order status berubah otomatis setiap **45 detik** untuk subscribed orders
 
 ## Query Parameters
 
