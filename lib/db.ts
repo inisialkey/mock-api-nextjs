@@ -113,6 +113,48 @@ function initTables(db: Database.Database) {
       FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
       FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      type TEXT DEFAULT 'string' CHECK(type IN ('string', 'number', 'boolean', 'json')),
+      description TEXT,
+      platform TEXT DEFAULT 'all' CHECK(platform IN ('all', 'ios', 'android')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS feature_flags (
+      key TEXT PRIMARY KEY,
+      enabled INTEGER DEFAULT 0,
+      description TEXT,
+      platform TEXT DEFAULT 'all' CHECK(platform IN ('all', 'ios', 'android')),
+      min_version TEXT,
+      max_version TEXT,
+      user_percentage INTEGER DEFAULT 100,
+      whitelist_user_ids TEXT, -- JSON array of user IDs
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS force_update (
+      platform TEXT PRIMARY KEY CHECK(platform IN ('ios', 'android')),
+      current_version TEXT NOT NULL,
+      min_version TEXT NOT NULL,
+      update_url TEXT NOT NULL,
+      release_notes TEXT,
+      is_force INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS maintenance (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      is_active INTEGER DEFAULT 0,
+      title TEXT DEFAULT 'Maintenance',
+      message TEXT DEFAULT 'We are currently performing maintenance. Please try again later.',
+      start_at TEXT,
+      end_at TEXT,
+      allowed_versions TEXT, -- JSON array of versions that bypass maintenance
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "mock-api-nextjs",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Mock API backend for mobile team (with WebSocket)",
   "private": true,
   "scripts": {

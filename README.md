@@ -91,6 +91,38 @@ WebSocket  : ws://localhost:3000
 |--------|----------------------|--------------------------------------|
 | POST | /api/ws/emit | Trigger WS events from REST/Postman |
 
+### App Config / Remote Config
+| Method | Endpoint | Description |
+|--------|--------------------------------------|----------------------------------------------|
+| GET | /api/config | Get all config (configs + flags + update + maintenance) |
+| PUT | /api/config | Update a config key-value (admin) |
+| GET | /api/config/feature-flags | List all feature flags detail (admin) |
+| POST | /api/config/feature-flags | Create/update feature flag (admin) |
+| DELETE | /api/config/feature-flags | Delete feature flag (admin) |
+| GET | /api/config/force-update | Check if app needs update (public) |
+| PUT | /api/config/force-update | Update force-update config (admin) |
+| GET | /api/config/maintenance | Check maintenance mode (public) |
+| PUT | /api/config/maintenance | Toggle maintenance mode (admin) |
+
+### Config Query Parameters
+```
+# Get all config for Android, app version 2.0.0
+GET /api/config?platform=android&app_version=2.0.0
+
+# Check force update
+GET /api/config/force-update?platform=ios&app_version=1.0.0
+
+# Check maintenance with version bypass
+GET /api/config/maintenance?app_version=2.1.0
+```
+
+### Feature Flag Capabilities
+- **Platform targeting**: `all`, `ios`, `android`
+- **Version gating**: `min_version` / `max_version`
+- **Percentage rollout**: `user_percentage` (0-100%)
+- **User whitelist**: specific user IDs always get the flag
+- Flags are evaluated per-user deterministically (same user always gets same result)
+
 ## WebSocket Events
 
 ### Connection

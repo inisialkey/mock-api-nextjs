@@ -337,6 +337,139 @@ function seed() {
 
   console.log(`   ✅ 2 chat rooms with messages seeded`);
 
+  // ─── Seed App Config ───
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      type TEXT DEFAULT 'string' CHECK(type IN ('string', 'number', 'boolean', 'json')),
+      description TEXT,
+      platform TEXT DEFAULT 'all' CHECK(platform IN ('all', 'ios', 'android')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS feature_flags (
+      key TEXT PRIMARY KEY,
+      enabled INTEGER DEFAULT 0,
+      description TEXT,
+      platform TEXT DEFAULT 'all' CHECK(platform IN ('all', 'ios', 'android')),
+      min_version TEXT,
+      max_version TEXT,
+      user_percentage INTEGER DEFAULT 100,
+      whitelist_user_ids TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS force_update (
+      platform TEXT PRIMARY KEY CHECK(platform IN ('ios', 'android')),
+      current_version TEXT NOT NULL,
+      min_version TEXT NOT NULL,
+      update_url TEXT NOT NULL,
+      release_notes TEXT,
+      is_force INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS maintenance (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      is_active INTEGER DEFAULT 0,
+      title TEXT DEFAULT 'Maintenance',
+      message TEXT DEFAULT 'We are currently performing maintenance. Please try again later.',
+      start_at TEXT,
+      end_at TEXT,
+      allowed_versions TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
+  // App Configs
+  const insertConfig = db.prepare(
+    'INSERT INTO app_config (key, value, type, description, platform) VALUES (?, ?, ?, ?, ?)'
+  );
+
+  const configs = [
+    { key: 'app_name', value: 'MockApp', type: 'string', desc: 'Application display name', platform: 'all' },
+    { key: 'app_tagline', value: 'Your everyday companion', type: 'string', desc: 'Tagline shown on splash/login', platform: 'all' },
+    { key: 'max_upload_size', value: '10485760', type: 'number', desc: 'Max file upload size in bytes (10MB)', platform: 'all' },
+    { key: 'pagination_limit', value: '20', type: 'number', desc: 'Default items per page', platform: 'all' },
+    { key: 'otp_timeout', value: '120', type: 'number', desc: 'OTP expiry in seconds', platform: 'all' },
+    { key: 'support_email', value: 'support@mockapp.com', type: 'string', desc: 'Customer support email', platform: 'all' },
+    { key: 'support_phone', value: '+6281234567890', type: 'string', desc: 'Customer support phone', platform: 'all' },
+    { key: 'support_whatsapp', value: 'https://wa.me/6281234567890', type: 'string', desc: 'WhatsApp support link', platform: 'all' },
+    { key: 'terms_url', value: 'https://mockapp.com/terms', type: 'string', desc: 'Terms of service URL', platform: 'all' },
+    { key: 'privacy_url', value: 'https://mockapp.com/privacy', type: 'string', desc: 'Privacy policy URL', platform: 'all' },
+    { key: 'onboarding_enabled', value: 'true', type: 'boolean', desc: 'Show onboarding on first launch', platform: 'all' },
+    { key: 'max_cart_items', value: '50', type: 'number', desc: 'Maximum items in cart', platform: 'all' },
+    { key: 'currency', value: 'IDR', type: 'string', desc: 'Default currency code', platform: 'all' },
+    { key: 'locale', value: 'id-ID', type: 'string', desc: 'Default locale', platform: 'all' },
+    { key: 'google_maps_style', value: '[]', type: 'json', desc: 'Custom Google Maps styling', platform: 'all' },
+    { key: 'ios_review_prompt_delay', value: '7', type: 'number', desc: 'Days before showing app review prompt', platform: 'ios' },
+    { key: 'android_in_app_update', value: 'true', type: 'boolean', desc: 'Enable in-app update for Android', platform: 'android' },
+  ];
+
+  for (const c of configs) {
+    insertConfig.run(c.key, c.value, c.type, c.desc, c.platform);
+  }
+  console.log(`   ✅ ${configs.length} app configs seeded`);
+
+  // Feature Flags
+  const insertFlag = db.prepare(
+    `INSERT INTO feature_flags (key, enabled, description, platform, min_version, max_version, user_percentage, whitelist_user_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  const flags = [
+    { key: 'dark_mode', enabled: 1, desc: 'Enable dark mode toggle', platform: 'all', min: null, max: null, pct: 100, whitelist: null },
+    { key: 'new_checkout_flow', enabled: 1, desc: 'New checkout UI with stepper', platform: 'all', min: '2.0.0', max: null, pct: 50, whitelist: JSON.stringify([adminId, userId]) },
+    { key: 'biometric_login', enabled: 1, desc: 'Allow fingerprint/face login', platform: 'all', min: '1.5.0', max: null, pct: 100, whitelist: null },
+    { key: 'stories_feature', enabled: 0, desc: 'Instagram-like stories on home', platform: 'all', min: '3.0.0', max: null, pct: 0, whitelist: JSON.stringify([adminId]) },
+    { key: 'voice_search', enabled: 0, desc: 'Voice search in product search', platform: 'all', min: '2.5.0', max: null, pct: 10, whitelist: null },
+    { key: 'live_chat_support', enabled: 1, desc: 'In-app live chat with CS', platform: 'all', min: null, max: null, pct: 100, whitelist: null },
+    { key: 'ar_product_preview', enabled: 0, desc: 'AR preview for products', platform: 'ios', min: '3.0.0', max: null, pct: 5, whitelist: null },
+    { key: 'google_pay', enabled: 1, desc: 'Google Pay payment method', platform: 'android', min: '2.0.0', max: null, pct: 100, whitelist: null },
+    { key: 'apple_pay', enabled: 1, desc: 'Apple Pay payment method', platform: 'ios', min: '2.0.0', max: null, pct: 100, whitelist: null },
+    { key: 'referral_program', enabled: 1, desc: 'Referral invite & earn feature', platform: 'all', min: '2.2.0', max: null, pct: 80, whitelist: null },
+    { key: 'product_recommendations', enabled: 1, desc: 'AI-based product recommendations', platform: 'all', min: null, max: null, pct: 100, whitelist: null },
+    { key: 'flash_sale_countdown', enabled: 1, desc: 'Show countdown timer on flash sale', platform: 'all', min: null, max: null, pct: 100, whitelist: null },
+  ];
+
+  for (const f of flags) {
+    insertFlag.run(f.key, f.enabled, f.desc, f.platform, f.min, f.max, f.pct, f.whitelist);
+  }
+  console.log(`   ✅ ${flags.length} feature flags seeded`);
+
+  // Force Update
+  const insertForceUpdate = db.prepare(
+    'INSERT INTO force_update (platform, current_version, min_version, update_url, release_notes, is_force) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+
+  insertForceUpdate.run(
+    'android',
+    '2.1.0',
+    '1.5.0',
+    'https://play.google.com/store/apps/details?id=com.mockapp',
+    'Bug fixes, performance improvements, and new checkout experience.',
+    1
+  );
+
+  insertForceUpdate.run(
+    'ios',
+    '2.1.0',
+    '1.5.0',
+    'https://apps.apple.com/app/mockapp/id123456789',
+    'Bug fixes, performance improvements, and new checkout experience.',
+    1
+  );
+  console.log(`   ✅ Force update config seeded (Android & iOS)`);
+
+  // Maintenance (default: off)
+  db.prepare(
+    `INSERT INTO maintenance (id, is_active, title, message, start_at, end_at, allowed_versions)
+     VALUES (1, 0, 'Scheduled Maintenance', 'We are improving our systems. Please try again shortly.', NULL, NULL, ?)`
+  ).run(JSON.stringify(['2.1.0']));
+  console.log(`   ✅ Maintenance config seeded (inactive)`);
+
   // ─── Done ───
   db.close();
   console.log('\n✨ Seed completed successfully!');
@@ -345,6 +478,7 @@ function seed() {
   console.log(`   User:  user@mock.com  / password123`);
   console.log(`\n💬 WebSocket: ws://localhost:3000`);
   console.log(`   Connect with: { auth: { token: "<access_token>" } }`);
+  console.log(`\n⚙️  Remote Config: GET /api/config?platform=android&app_version=2.0.0`);
 }
 
 seed();
