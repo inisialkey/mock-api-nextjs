@@ -12,17 +12,51 @@ export interface JwtPayload {
 }
 
 /**
- * Generate access token (short-lived)
+ * Standard token type returned in auth responses.
  */
-export function generateAccessToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+export const TOKEN_TYPE = 'Bearer' as const;
+
+/**
+ * Parse a duration string like "7d", "15m", "1h", "60s" (or a number of seconds)
+ * into seconds. Returns 0 on parse failure so callers can detect bad config.
+ */
+function parseDurationToSeconds(input: string | number): number {
+  if (typeof input === 'number') return Math.floor(input);
+  const match = /^(\d+)\s*(s|m|h|d)?$/i.exec(input.trim());
+  if (!match) return 0;
+  const value = parseInt(match[1], 10);
+  const unit = (match[2] || 's').toLowerCase();
+  switch (unit) {
+    case 's': return value;
+    case 'm': return value * 60;
+    case 'h': return value * 3600;
+    case 'd': return value * 86400;
+    default:  return value;
+  }
 }
 
 /**
- * Generate refresh token (long-lived)
+ * Access token lifetime in seconds (parsed from `JWT_EXPIRES_IN`).
+ * Returned to clients as `expires_in` so Dio refresh interceptors can
+ * proactively rotate before expiry.
+ */
+export const ACCESS_TOKEN_LIFETIME_SECONDS = parseDurationToSeconds(JWT_EXPIRES_IN);
+export const REFRESH_TOKEN_LIFETIME_SECONDS = parseDurationToSeconds(JWT_REFRESH_EXPIRES_IN);
+
+/**
+ * Generate access token (short-lived).
+ * Uses the parsed numeric lifetime so the type checker is happy with newer
+ * @types/jsonwebtoken which restricts `expiresIn` to `number | StringValue`.
+ */
+export function generateAccessToken(payload: JwtPayload): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_LIFETIME_SECONDS });
+}
+
+/**
+ * Generate refresh token (long-lived).
  */
 export function generateRefreshToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: REFRESH_TOKEN_LIFETIME_SECONDS });
 }
 
 /**

@@ -47,7 +47,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     const messages = db
       .prepare(
         `SELECT cm.id, cm.room_id, cm.sender_id, u.name as sender_name,
-                u.avatar as sender_avatar, cm.content, cm.type, cm.created_at
+                u.avatar_url as sender_avatar_url, cm.content, cm.type, cm.created_at
          FROM chat_messages cm
          JOIN users u ON cm.sender_id = u.id
          WHERE cm.room_id = ?

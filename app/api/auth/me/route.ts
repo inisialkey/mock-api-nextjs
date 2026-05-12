@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const user = db
       .prepare(
-        'SELECT id, name, email, phone, avatar, role, created_at, updated_at FROM users WHERE id = ?'
+        'SELECT id, name, email, phone, avatar_url, role, is_active, created_at, updated_at FROM users WHERE id = ?'
       )
       .get(auth.id);
 
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       return Errors.notFound('User');
     }
 
-    return successResponse({ data: user });
+    return successResponse({ data: user, message: 'Profile retrieved.' });
   } catch (error) {
     console.error('Me error:', error);
     return Errors.internal();

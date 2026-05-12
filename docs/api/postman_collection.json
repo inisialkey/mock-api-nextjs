@@ -1,0 +1,887 @@
+{
+  "info": {
+    "name": "MockApp API",
+    "description": "Production-ready mock API for the MockApp mobile application. Import this collection together with the **MockApp (Local)** environment.\n\n## Quick start\n1. Import this collection AND the `postman_environment.json` file.\n2. Select the **MockApp (Local)** environment in the top-right.\n3. Run **Auth → Login (admin)** — the `access_token` and `refresh_token` are captured automatically by the test script.\n4. Every other request uses the saved token via the collection-level Bearer auth.\n\n## Edge cases\nAppend `?scenario=<name>` to any request:\n- `error` `validation` `unauthorized` `forbidden` `not_found` `maintenance` `rate_limit` `force_update` `empty` `slow` `very_slow` `timeout`\n\nSee `00-overview.md` and `openapi.yaml` in this repo for full spec.",
+    "version": "1.2.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url",      "value": "http://localhost:3000/api", "type": "string" },
+    { "key": "access_token",  "value": "",                          "type": "string" },
+    { "key": "refresh_token", "value": "",                          "type": "string" },
+    { "key": "user_id",       "value": "",                          "type": "string" },
+    { "key": "product_id",    "value": "",                          "type": "string" },
+    { "key": "room_id",       "value": "",                          "type": "string" },
+    { "key": "notification_id","value": "",                         "type": "string" },
+    { "key": "address_id",    "value": "",                          "type": "string" },
+    { "key": "order_id",      "value": "",                          "type": "string" },
+    { "key": "order_ref",     "value": "",                          "type": "string" },
+    { "key": "app_version",   "value": "2.0.0",                     "type": "string" },
+    { "key": "app_platform",  "value": "android",                   "type": "string" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Generate a per-request X-Request-Id for traceability",
+          "if (pm.request.headers.idx('X-Request-Id') === -1) {",
+          "  pm.request.headers.add({ key: 'X-Request-Id', value: 'req_' + pm.variables.replaceIn('{{$guid}}') });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",    "value": "application/json" },
+              { "key": "X-App-Version",   "value": "{{app_version}}" },
+              { "key": "X-App-Platform",  "value": "{{app_platform}}" }
+            ],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/register", "host": ["{{base_url}}"], "path": ["auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Andi Wijaya\",\n  \"email\": \"andi+{{$timestamp}}@example.com\",\n  \"password\": \"secret123\",\n  \"phone\": \"+6281234567892\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('envelope.success = true', () => pm.expect(body.success).to.eql(true));",
+                  "if (body.data && body.data.access_token) {",
+                  "  pm.collectionVariables.set('access_token',  body.data.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "  pm.collectionVariables.set('user_id',       body.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",    "value": "application/json" },
+              { "key": "X-App-Version",   "value": "{{app_version}}" },
+              { "key": "X-App-Platform",  "value": "{{app_platform}}" }
+            ],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@mock.com\",\n  \"password\": \"password123\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('envelope.success = true', () => pm.expect(body.success).to.eql(true));",
+                  "pm.test('data has tokens', () => {",
+                  "  pm.expect(body.data).to.have.property('access_token');",
+                  "  pm.expect(body.data).to.have.property('refresh_token');",
+                  "});",
+                  "pm.collectionVariables.set('access_token',  body.data.access_token);",
+                  "pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "pm.collectionVariables.set('user_id',       body.data.user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (user)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"user@mock.com\",\n  \"password\": \"password123\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) {",
+                  "  pm.collectionVariables.set('access_token',  body.data.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "  pm.collectionVariables.set('user_id',       body.data.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login — invalid credentials (401)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@mock.com\",\n  \"password\": \"WRONG\"\n}" }
+          }
+        },
+        {
+          "name": "Login — validation error (422)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/auth/login?scenario=validation",
+              "host": ["{{base_url}}"], "path": ["auth", "login"],
+              "query": [{ "key": "scenario", "value": "validation" }]
+            },
+            "body": { "mode": "raw", "raw": "{ \"email\": \"\" }" }
+          }
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/refresh", "host": ["{{base_url}}"], "path": ["auth", "refresh"] },
+            "body": { "mode": "raw", "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) {",
+                  "  pm.collectionVariables.set('access_token',  body.data.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('access_token',  '');",
+                  "pm.collectionVariables.set('refresh_token', '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me (current user)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/auth/me", "host": ["{{base_url}}"], "path": ["auth", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/users?page=1&limit=20",
+              "host": ["{{base_url}}"], "path": ["users"],
+              "query": [
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" },
+                { "key": "search", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get user",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/users/{{user_id}}", "host": ["{{base_url}}"], "path": ["users", "{{user_id}}"] }
+          }
+        },
+        {
+          "name": "Update user",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/users/{{user_id}}", "host": ["{{base_url}}"], "path": ["users", "{{user_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Updated Name\",\n  \"phone\": \"+6281234567899\"\n}" }
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/users/{{user_id}}", "host": ["{{base_url}}"], "path": ["users", "{{user_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "List products",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/products?page=1&limit=20&sort=created_at&order=desc",
+              "host": ["{{base_url}}"], "path": ["products"],
+              "query": [
+                { "key": "page",      "value": "1" },
+                { "key": "limit",     "value": "20" },
+                { "key": "sort",      "value": "created_at" },
+                { "key": "order",     "value": "desc" },
+                { "key": "search",    "value": "", "disabled": true },
+                { "key": "category",  "value": "electronics", "disabled": true },
+                { "key": "min_price", "value": "100000", "disabled": true },
+                { "key": "max_price", "value": "5000000", "disabled": true },
+                { "key": "in_stock",  "value": "true", "disabled": true }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('product_id', body.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List products — empty",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/products?scenario=empty",
+              "host": ["{{base_url}}"], "path": ["products"],
+              "query": [{ "key": "scenario", "value": "empty" }]
+            }
+          }
+        },
+        {
+          "name": "List products — slow",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/products?scenario=slow",
+              "host": ["{{base_url}}"], "path": ["products"],
+              "query": [{ "key": "scenario", "value": "slow" }]
+            }
+          }
+        },
+        {
+          "name": "Get product",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products/{{product_id}}", "host": ["{{base_url}}"], "path": ["products", "{{product_id}}"] }
+          }
+        },
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/products", "host": ["{{base_url}}"], "path": ["products"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wireless Headphones\",\n  \"description\": \"Premium noise-cancelling.\",\n  \"price\": 2500000,\n  \"discount_price\": 1999000,\n  \"category\": \"electronics\",\n  \"stock\": 50,\n  \"image\": \"https://picsum.photos/seed/h/400/400\",\n  \"images\": [\"https://picsum.photos/seed/h1/400/400\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Update product",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/products/{{product_id}}", "host": ["{{base_url}}"], "path": ["products", "{{product_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"price\": 1799000,\n  \"stock\": 100\n}" }
+          }
+        },
+        {
+          "name": "Delete product",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/products/{{product_id}}", "host": ["{{base_url}}"], "path": ["products", "{{product_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/notifications?page=1&limit=20",
+              "host": ["{{base_url}}"], "path": ["notifications"],
+              "query": [
+                { "key": "page",    "value": "1" },
+                { "key": "limit",   "value": "20" },
+                { "key": "type",    "value": "promo", "disabled": true },
+                { "key": "is_read", "value": "false", "disabled": true }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('notification_id', body.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark as read",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{base_url}}/notifications/{{notification_id}}/read", "host": ["{{base_url}}"], "path": ["notifications", "{{notification_id}}", "read"] }
+          }
+        },
+        {
+          "name": "Mark all as read",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{base_url}}/notifications/read-all", "host": ["{{base_url}}"], "path": ["notifications", "read-all"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "List rooms",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/chat/rooms", "host": ["{{base_url}}"], "path": ["chat", "rooms"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('room_id', body.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create room",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/chat/rooms", "host": ["{{base_url}}"], "path": ["chat", "rooms"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"group\",\n  \"name\": \"Tim Mobile Dev\",\n  \"member_ids\": [\"{{user_id}}\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get room messages",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/chat/rooms/{{room_id}}/messages?page=1&limit=50",
+              "host": ["{{base_url}}"], "path": ["chat", "rooms", "{{room_id}}", "messages"],
+              "query": [
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "50" },
+                { "key": "before", "value": "", "disabled": true }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Config",
+      "item": [
+        {
+          "name": "Get config bundle",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/config?platform={{app_platform}}&app_version={{app_version}}",
+              "host": ["{{base_url}}"], "path": ["config"],
+              "query": [
+                { "key": "platform",    "value": "{{app_platform}}" },
+                { "key": "app_version", "value": "{{app_version}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update config (admin)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/config", "host": ["{{base_url}}"], "path": ["config"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"pagination_limit\",\n  \"value\": 30,\n  \"type\": \"number\",\n  \"platform\": \"all\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List feature flags (admin)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/config/feature-flags", "host": ["{{base_url}}"], "path": ["config", "feature-flags"] }
+          }
+        },
+        {
+          "name": "Force-update check",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/config/force-update?platform={{app_platform}}&app_version=1.0.0",
+              "host": ["{{base_url}}"], "path": ["config", "force-update"],
+              "query": [
+                { "key": "platform",    "value": "{{app_platform}}" },
+                { "key": "app_version", "value": "1.0.0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Maintenance status",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/config/maintenance", "host": ["{{base_url}}"], "path": ["config", "maintenance"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Upload file",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/upload", "host": ["{{base_url}}"], "path": ["upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": [] }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Categories",
+      "item": [
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": ["{{base_url}}"], "path": ["categories"],
+              "query": [{ "key": "parent_id", "value": "root", "disabled": true }]
+            }
+          }
+        },
+        {
+          "name": "Get category by slug",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/categories/electronics", "host": ["{{base_url}}"], "path": ["categories", "electronics"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Addresses",
+      "item": [
+        {
+          "name": "List addresses",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/addresses", "host": ["{{base_url}}"], "path": ["addresses"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('address_id', body.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create address",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/addresses", "host": ["{{base_url}}"], "path": ["addresses"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Pacar\",\n  \"recipient_name\": \"Test User\",\n  \"phone\": \"+6281234567891\",\n  \"street\": \"Jl. Cinta No. 7\",\n  \"city\": \"Yogyakarta\",\n  \"province\": \"DI Yogyakarta\",\n  \"postal_code\": \"55211\",\n  \"notes\": \"Rumah orang tua pacar\",\n  \"is_default\": false,\n  \"latitude\": -7.7956,\n  \"longitude\": 110.3695\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data) {",
+                  "  pm.collectionVariables.set('address_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get address",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/addresses/{{address_id}}", "host": ["{{base_url}}"], "path": ["addresses", "{{address_id}}"] }
+          }
+        },
+        {
+          "name": "Update address",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/addresses/{{address_id}}", "host": ["{{base_url}}"], "path": ["addresses", "{{address_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Updated notes\"\n}" }
+          }
+        },
+        {
+          "name": "Set as default",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{base_url}}/addresses/{{address_id}}/default", "host": ["{{base_url}}"], "path": ["addresses", "{{address_id}}", "default"] }
+          }
+        },
+        {
+          "name": "Delete address",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/addresses/{{address_id}}", "host": ["{{base_url}}"], "path": ["addresses", "{{address_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cart",
+      "item": [
+        {
+          "name": "Get cart",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/cart", "host": ["{{base_url}}"], "path": ["cart"] }
+          }
+        },
+        {
+          "name": "Add item",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/cart/items", "host": ["{{base_url}}"], "path": ["cart", "items"] },
+            "body": { "mode": "raw", "raw": "{\n  \"product_id\": \"{{product_id}}\",\n  \"quantity\": 1\n}" }
+          }
+        },
+        {
+          "name": "Update item quantity",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/cart/items/{{product_id}}", "host": ["{{base_url}}"], "path": ["cart", "items", "{{product_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 3\n}" }
+          }
+        },
+        {
+          "name": "Remove item",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/cart/items/{{product_id}}", "host": ["{{base_url}}"], "path": ["cart", "items", "{{product_id}}"] }
+          }
+        },
+        {
+          "name": "Clear cart",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/cart", "host": ["{{base_url}}"], "path": ["cart"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "List orders",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/orders?page=1&limit=20",
+              "host": ["{{base_url}}"], "path": ["orders"],
+              "query": [
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" },
+                { "key": "status", "value": "pending", "disabled": true }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.length) {",
+                  "  pm.collectionVariables.set('order_id',  body.data[0].id);",
+                  "  pm.collectionVariables.set('order_ref', body.data[0].reference);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (from cart)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shipping_address_id\": \"{{address_id}}\",\n  \"payment_method\": \"e_wallet\",\n  \"notes\": \"Mohon konfirmasi sebelum pengiriman.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data) {",
+                  "  pm.collectionVariables.set('order_id',  body.data.id);",
+                  "  pm.collectionVariables.set('order_ref', body.data.reference);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (by id)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/orders/{{order_id}}", "host": ["{{base_url}}"], "path": ["orders", "{{order_id}}"] }
+          }
+        },
+        {
+          "name": "Get order (by reference)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/orders/{{order_ref}}", "host": ["{{base_url}}"], "path": ["orders", "{{order_ref}}"] }
+          }
+        },
+        {
+          "name": "Cancel order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/orders/{{order_id}}/cancel", "host": ["{{base_url}}"], "path": ["orders", "{{order_id}}", "cancel"] },
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Changed my mind.\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Edge cases (scenarios)",
+      "description": "Forced edge-case responses to exercise mobile error UI. Append `?scenario=<name>` to any endpoint.",
+      "item": [
+        {
+          "name": "500 Internal error",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products?scenario=error", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "error" }] }
+          }
+        },
+        {
+          "name": "401 Unauthorized (token expired)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/auth/me?scenario=unauthorized", "host": ["{{base_url}}"], "path": ["auth", "me"], "query": [{ "key": "scenario", "value": "unauthorized" }] }
+          }
+        },
+        {
+          "name": "403 Forbidden",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/products?scenario=forbidden", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "forbidden" }] }
+          }
+        },
+        {
+          "name": "404 Not found",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products/00000000-0000-0000-0000-000000000000?scenario=not_found", "host": ["{{base_url}}"], "path": ["products", "00000000-0000-0000-0000-000000000000"], "query": [{ "key": "scenario", "value": "not_found" }] }
+          }
+        },
+        {
+          "name": "422 Validation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/auth/login?scenario=validation", "host": ["{{base_url}}"], "path": ["auth", "login"], "query": [{ "key": "scenario", "value": "validation" }] },
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        },
+        {
+          "name": "429 Rate limit",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products?scenario=rate_limit", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "rate_limit" }] }
+          }
+        },
+        {
+          "name": "503 Maintenance",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/config?scenario=maintenance", "host": ["{{base_url}}"], "path": ["config"], "query": [{ "key": "scenario", "value": "maintenance" }] }
+          }
+        },
+        {
+          "name": "426 Force update",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/config/force-update?scenario=force_update&platform={{app_platform}}&app_version=1.0.0", "host": ["{{base_url}}"], "path": ["config", "force-update"], "query": [{ "key": "scenario", "value": "force_update" }, { "key": "platform", "value": "{{app_platform}}" }, { "key": "app_version", "value": "1.0.0" }] }
+          }
+        },
+        {
+          "name": "Slow (3 s)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products?scenario=slow", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "slow" }] }
+          }
+        },
+        {
+          "name": "Very slow (10 s)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products?scenario=very_slow", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "very_slow" }] }
+          }
+        },
+        {
+          "name": "Timeout",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{base_url}}/products?scenario=timeout", "host": ["{{base_url}}"], "path": ["products"], "query": [{ "key": "scenario", "value": "timeout" }] }
+          }
+        }
+      ]
+    }
+  ]
+}

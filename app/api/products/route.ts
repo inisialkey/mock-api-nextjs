@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
     if (isEmptyScenario(request)) {
       return successResponse({
         data: [],
-        meta: { page: 1, limit: 10, total: 0, total_pages: 0 },
+        meta: { page: 1, limit: 20, total: 0, total_pages: 0, has_next: false, has_prev: false },
+        message: 'No products found.',
       });
     }
 

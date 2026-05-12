@@ -422,7 +422,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
   setInterval(() => {
     // Find rooms that start with "order:"
     const rooms = io.sockets.adapter.rooms;
-    for (const [roomName] of rooms) {
+    for (const [roomName] of Array.from(rooms.entries())) {
       if (roomName.startsWith('order:')) {
         const orderId = roomName.replace('order:', '');
         const currentIndex = orderStatusIndex.get(orderId) || 0;

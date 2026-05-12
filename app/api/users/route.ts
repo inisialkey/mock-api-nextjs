@@ -21,7 +21,8 @@ export async function GET(request: NextRequest) {
     if (isEmptyScenario(request)) {
       return successResponse({
         data: [],
-        meta: { page: 1, limit: 10, total: 0, total_pages: 0 },
+        meta: { page: 1, limit: 20, total: 0, total_pages: 0, has_next: false, has_prev: false },
+        message: 'No users found.',
       });
     }
 
@@ -65,14 +66,14 @@ export async function GET(request: NextRequest) {
     // Fetch
     const users = db
       .prepare(
-        `SELECT id, name, email, phone, avatar, role, is_active, created_at
+        `SELECT id, name, email, phone, avatar_url, role, is_active, created_at, updated_at
          FROM users ${whereClause}
          ORDER BY ${safeSort} ${sortOrder}
          LIMIT ? OFFSET ?`
       )
       .all(...params, meta.limit, offset);
 
-    return successResponse({ data: users, meta });
+    return successResponse({ data: users, meta, message: 'Users retrieved.' });
   } catch (error) {
     console.error('Users list error:', error);
     return Errors.internal();

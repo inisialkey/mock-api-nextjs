@@ -75,7 +75,7 @@ function seed() {
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       phone TEXT,
-      avatar TEXT,
+      avatar_url TEXT,
       role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
       is_active INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')),
@@ -135,7 +135,7 @@ function seed() {
 
   // ─── Seed Users ───
   const insertUser = db.prepare(`
-    INSERT INTO users (id, name, email, password, phone, avatar, role, created_at)
+    INSERT INTO users (id, name, email, password, phone, avatar_url, role, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
@@ -469,6 +469,259 @@ function seed() {
      VALUES (1, 0, 'Scheduled Maintenance', 'We are improving our systems. Please try again shortly.', NULL, NULL, ?)`
   ).run(JSON.stringify(['2.1.0']));
   console.log(`   ✅ Maintenance config seeded (inactive)`);
+
+  // ─── E-commerce: Categories, Addresses, Orders ──────────────────────
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      icon TEXT,
+      image_url TEXT,
+      parent_id TEXT,
+      sort_order INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS addresses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      label TEXT,
+      recipient_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      street TEXT NOT NULL,
+      city TEXT NOT NULL,
+      province TEXT NOT NULL,
+      postal_code TEXT NOT NULL,
+      country TEXT NOT NULL DEFAULT 'ID',
+      notes TEXT,
+      is_default INTEGER DEFAULT 0,
+      latitude REAL,
+      longitude REAL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS cart_items (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity > 0),
+      added_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (user_id, product_id),
+      FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      reference TEXT UNIQUE NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','confirmed','processing','shipped','out_for_delivery','delivered','cancelled','refunded')),
+      subtotal REAL NOT NULL,
+      shipping_fee REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      tax REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'IDR',
+      payment_method TEXT
+        CHECK(payment_method IS NULL OR payment_method IN ('bank_transfer','credit_card','e_wallet','cod')),
+      payment_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(payment_status IN ('pending','paid','failed','refunded')),
+      shipping_address_id TEXT,
+      shipping_address_snapshot TEXT,
+      tracking_number TEXT,
+      notes TEXT,
+      placed_at TEXT DEFAULT (datetime('now')),
+      confirmed_at TEXT,
+      shipped_at TEXT,
+      delivered_at TEXT,
+      cancelled_at TEXT,
+      cancellation_reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (shipping_address_id) REFERENCES addresses(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS order_items (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT NOT NULL,
+      product_image TEXT,
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      unit_price REAL NOT NULL,
+      subtotal REAL NOT NULL,
+      FOREIGN KEY (order_id)   REFERENCES orders(id)   ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+    );
+  `);
+
+  // Categories — slugs match the existing `CATEGORIES` constant used by products
+  const insertCategory = db.prepare(
+    `INSERT INTO categories (id, slug, name, description, icon, image_url, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const categoryDefs = [
+    { slug: 'electronics', name: 'Electronics',  icon: 'devices',        desc: 'Phones, laptops, gadgets, and accessories.' },
+    { slug: 'fashion',     name: 'Fashion',      icon: 'checkroom',      desc: 'Clothing, footwear, and accessories.' },
+    { slug: 'food',        name: 'Food & Drinks', icon: 'restaurant',    desc: 'Groceries, snacks, beverages.' },
+    { slug: 'health',      name: 'Health & Beauty', icon: 'spa',         desc: 'Personal care, supplements, cosmetics.' },
+    { slug: 'sports',      name: 'Sports & Outdoor', icon: 'sports_soccer', desc: 'Fitness gear, outdoor equipment, sportswear.' },
+    { slug: 'books',       name: 'Books',        icon: 'menu_book',      desc: 'Novels, textbooks, comics.' },
+    { slug: 'home',        name: 'Home & Living', icon: 'chair',         desc: 'Furniture, decor, kitchen.' },
+  ];
+  for (let i = 0; i < categoryDefs.length; i++) {
+    const c = categoryDefs[i];
+    insertCategory.run(
+      uuid(),
+      c.slug,
+      c.name,
+      c.desc,
+      c.icon,
+      `https://picsum.photos/seed/${c.slug}/600/400`,
+      i + 1
+    );
+  }
+  console.log(`   ✅ ${categoryDefs.length} categories seeded`);
+
+  // Addresses — 2 per fixed test user (admin + user)
+  const insertAddress = db.prepare(
+    `INSERT INTO addresses (id, user_id, label, recipient_name, phone, street, city, province, postal_code, country, notes, is_default, latitude, longitude)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const addressDefs = [
+    { user: adminId, label: 'Home',   recipient: 'Admin User', phone: '+6281234567890', street: 'Jl. Sudirman No. 1', city: 'Jakarta Selatan', province: 'DKI Jakarta', postal: '12190', notes: 'Apartment 12A, Tower B', is_default: 1, lat: -6.2088, lng: 106.8456 },
+    { user: adminId, label: 'Office', recipient: 'Admin User', phone: '+6281234567890', street: 'Jl. Gatot Subroto No. 42', city: 'Jakarta Selatan', province: 'DKI Jakarta', postal: '12930', notes: 'Floor 5', is_default: 0, lat: -6.2335, lng: 106.8284 },
+    { user: userId,  label: 'Home',   recipient: 'Test User',  phone: '+6281234567891', street: 'Jl. Asia Afrika No. 158', city: 'Bandung',          province: 'Jawa Barat',  postal: '40112', notes: 'Pagar hijau, samping warung',     is_default: 1, lat: -6.9217, lng: 107.6045 },
+    { user: userId,  label: 'Kampus', recipient: 'Test User',  phone: '+6281234567891', street: 'Jl. Ganesha No. 10',     city: 'Bandung',          province: 'Jawa Barat',  postal: '40132', notes: 'Kost Pak Budi, kamar 7',         is_default: 0, lat: -6.8915, lng: 107.6107 },
+  ];
+  const addressIdsByUser: Record<string, string[]> = {};
+  for (const a of addressDefs) {
+    const id = uuid();
+    addressIdsByUser[a.user] = addressIdsByUser[a.user] || [];
+    addressIdsByUser[a.user].push(id);
+    insertAddress.run(
+      id, a.user, a.label, a.recipient, a.phone,
+      a.street, a.city, a.province, a.postal, 'ID',
+      a.notes, a.is_default, a.lat, a.lng
+    );
+  }
+  console.log(`   ✅ ${addressDefs.length} addresses seeded`);
+
+  // Orders — 3 orders for the fixed Test User, varied statuses
+  interface SeedProduct { id: string; name: string; price: number; image: string | null }
+  const sampleProducts = db
+    .prepare('SELECT id, name, price, image FROM products WHERE is_active = 1 LIMIT 8')
+    .all() as SeedProduct[];
+
+  if (sampleProducts.length >= 4 && addressIdsByUser[userId]?.[0]) {
+    const insertOrder = db.prepare(
+      `INSERT INTO orders (id, reference, user_id, status, subtotal, shipping_fee, discount, tax, total, currency, payment_method, payment_status, shipping_address_id, shipping_address_snapshot, tracking_number, notes, placed_at, confirmed_at, shipped_at, delivered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertOrderItem = db.prepare(
+      `INSERT INTO order_items (id, order_id, product_id, product_name, product_image, quantity, unit_price, subtotal)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    const userAddressId = addressIdsByUser[userId][0];
+    const addressSnapshot = JSON.stringify({
+      label: 'Home',
+      recipient_name: 'Test User',
+      phone: '+6281234567891',
+      street: 'Jl. Asia Afrika No. 158',
+      city: 'Bandung',
+      province: 'Jawa Barat',
+      postal_code: '40112',
+      country: 'ID',
+    });
+
+    interface ItemPlan { product: SeedProduct; qty: number; subtotal: number }
+    const planItems = (picks: SeedProduct[], quantities: number[]): ItemPlan[] =>
+      picks.map((p, i) => ({
+        product: p,
+        qty: quantities[i],
+        subtotal: Math.round(p.price * quantities[i]),
+      }));
+    const insertItems = (orderId: string, items: ItemPlan[]) => {
+      for (const it of items) {
+        insertOrderItem.run(
+          uuid(), orderId,
+          it.product.id, it.product.name, it.product.image,
+          it.qty, it.product.price, it.subtotal
+        );
+      }
+    };
+
+    // 1. Delivered order (45 days ago)
+    {
+      const id = uuid();
+      const items = planItems([sampleProducts[0], sampleProducts[1]], [1, 2]);
+      const subtotal = items.reduce((a, x) => a + x.subtotal, 0);
+      const shippingFee = 25000;
+      const total = subtotal + shippingFee;
+      const placedAt    = new Date(Date.now() - 45 * 86400000).toISOString();
+      const confirmedAt = new Date(Date.now() - 45 * 86400000 + 3600000).toISOString();
+      const shippedAt   = new Date(Date.now() - 44 * 86400000).toISOString();
+      const deliveredAt = new Date(Date.now() - 42 * 86400000).toISOString();
+      insertOrder.run(
+        id, 'ORD-2026-00001', userId, 'delivered',
+        subtotal, shippingFee, 0, 0, total, 'IDR',
+        'credit_card', 'paid',
+        userAddressId, addressSnapshot,
+        'JNE-001-IDX-90A12', 'Mohon diletakkan di teras.',
+        placedAt, confirmedAt, shippedAt, deliveredAt
+      );
+      insertItems(id, items);
+    }
+
+    // 2. Shipped, currently in transit (3 days ago)
+    {
+      const id = uuid();
+      const items = planItems([sampleProducts[2], sampleProducts[3], sampleProducts[4]], [1, 1, 1]);
+      const subtotal = items.reduce((a, x) => a + x.subtotal, 0);
+      const shippingFee = 30000;
+      const total = subtotal + shippingFee;
+      const placedAt    = new Date(Date.now() - 3 * 86400000).toISOString();
+      const confirmedAt = new Date(Date.now() - 3 * 86400000 + 1800000).toISOString();
+      const shippedAt   = new Date(Date.now() - 1 * 86400000).toISOString();
+      insertOrder.run(
+        id, 'ORD-2026-00002', userId, 'shipped',
+        subtotal, shippingFee, 0, 0, total, 'IDR',
+        'bank_transfer', 'paid',
+        userAddressId, addressSnapshot,
+        'JNE-002-IDX-77B43', null,
+        placedAt, confirmedAt, shippedAt, null
+      );
+      insertItems(id, items);
+    }
+
+    // 3. Pending payment (15 minutes ago)
+    {
+      const id = uuid();
+      const items = planItems([sampleProducts[5]], [1]);
+      const subtotal = items.reduce((a, x) => a + x.subtotal, 0);
+      const shippingFee = 15000;
+      const total = subtotal + shippingFee;
+      const placedAt = new Date(Date.now() - 15 * 60000).toISOString();
+      insertOrder.run(
+        id, 'ORD-2026-00003', userId, 'pending',
+        subtotal, shippingFee, 0, 0, total, 'IDR',
+        'e_wallet', 'pending',
+        userAddressId, addressSnapshot,
+        null, null,
+        placedAt, null, null, null
+      );
+      insertItems(id, items);
+    }
+
+    console.log(`   ✅ 3 sample orders seeded for Test User`);
+  }
 
   // ─── Done ───
   db.close();

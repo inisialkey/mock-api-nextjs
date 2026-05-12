@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     const db = getDb();
     const user = db
       .prepare(
-        'SELECT id, name, email, phone, avatar, role, is_active, created_at, updated_at FROM users WHERE id = ?'
+        'SELECT id, name, email, phone, avatar_url, role, is_active, created_at, updated_at FROM users WHERE id = ?'
       )
       .get(params.id);
 
@@ -51,7 +51,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     const db = getDb();
     const body = await request.json();
-    const { name, phone, avatar } = body;
+    const { name, phone, avatar_url } = body;
 
     // Check user exists
     const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(params.id);
@@ -71,9 +71,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
       updates.push('phone = ?');
       values.push(phone);
     }
-    if (avatar !== undefined) {
-      updates.push('avatar = ?');
-      values.push(avatar);
+    if (avatar_url !== undefined) {
+      updates.push('avatar_url = ?');
+      values.push(avatar_url);
     }
 
     if (updates.length === 0) {
@@ -88,7 +88,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // Return updated user
     const user = db
       .prepare(
-        'SELECT id, name, email, phone, avatar, role, is_active, created_at, updated_at FROM users WHERE id = ?'
+        'SELECT id, name, email, phone, avatar_url, role, is_active, created_at, updated_at FROM users WHERE id = ?'
       )
       .get(params.id);
 

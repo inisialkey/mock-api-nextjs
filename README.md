@@ -2,6 +2,13 @@
 
 Mock backend untuk kebutuhan tim mobile development.
 
+> **📘 Production-ready API spec → [`docs/api/`](./docs/api/README.md)**
+>
+> The complete OpenAPI 3.1 specification, Postman collection, Mockoon setup, and
+> Flutter Clean Architecture integration guide live in [`docs/api/`](./docs/api/README.md).
+> Start with [`docs/api/00-overview.md`](./docs/api/00-overview.md) for the response envelope,
+> error code registry, auth flow, and edge-case scenarios.
+
 ## Tech Stack
 - **Next.js 14** (App Router + Route Handlers)
 - **TypeScript**

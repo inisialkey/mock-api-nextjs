@@ -1,22 +1,25 @@
 import { NextRequest } from 'next/server';
-import { Errors, errorResponse } from './response';
+import { Errors } from './response';
 
 /**
- * Scenario simulator for testing edge cases from mobile app.
+ * Scenario simulator for testing mobile-app edge cases.
  *
- * Usage: Add ?scenario=<name> to any endpoint
+ * Usage: append `?scenario=<name>` to any endpoint.
  *
- * Available scenarios:
- * - error     : Returns 500 Internal Server Error
- * - empty     : Returns empty data array
- * - slow      : Adds 3 second delay before response
- * - very_slow : Adds 10 second delay before response
- * - unauthorized : Returns 401 Unauthorized
- * - forbidden    : Returns 403 Forbidden
- * - not_found    : Returns 404 Not Found
- * - validation   : Returns 422 Validation Error
- * - maintenance  : Returns 503 Service Unavailable
- * - rate_limit   : Returns 429 Too Many Requests
+ * See `docs/api/00-overview.md` §9 for the full table. Available scenarios:
+ *
+ *   error         500 INTERNAL_SERVER_ERROR
+ *   validation    422 VALIDATION_ERROR (with sample field errors)
+ *   unauthorized  401 AUTH_TOKEN_EXPIRED
+ *   forbidden     403 AUTHORIZATION_FORBIDDEN
+ *   not_found     404 RESOURCE_NOT_FOUND
+ *   maintenance   503 MAINTENANCE_MODE
+ *   rate_limit    429 RATE_LIMIT_EXCEEDED (with Retry-After: 30)
+ *   force_update  426 FORCE_UPDATE_REQUIRED
+ *   empty         200 with empty data — handled by each route via `isEmptyScenario`
+ *   slow          3-second delay, then normal response
+ *   very_slow     10-second delay
+ *   timeout       hangs until the client times out
  */
 export async function handleScenario(
   request: NextRequest
@@ -25,8 +28,9 @@ export async function handleScenario(
   const scenario = searchParams.get('scenario');
 
   if (!scenario) {
-    // Apply global delay if configured
-    const globalDelay = parseInt(process.env.MOCK_DELAY || '0');
+    // Apply global delay if configured via MOCK_DELAY env var.
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env || {};
+    const globalDelay = parseInt(env.MOCK_DELAY || '0', 10);
     if (globalDelay > 0) {
       await delay(globalDelay);
     }
@@ -35,10 +39,10 @@ export async function handleScenario(
 
   switch (scenario) {
     case 'error':
-      return Errors.internal('Simulated internal server error');
+      return Errors.internal('Simulated internal server error.');
 
     case 'empty':
-      return null; // handled by each route individually
+      return null; // each route handles the empty-list shape itself
 
     case 'slow':
       await delay(3000);
@@ -48,42 +52,49 @@ export async function handleScenario(
       await delay(10000);
       return null;
 
+    case 'timeout':
+      // Hang the request until the client aborts (no response).
+      // Useful for verifying Dio `receiveTimeout` handling.
+      await new Promise<never>(() => {}); // never resolves
+      return null;
+
     case 'unauthorized':
-      return Errors.unauthorized('Simulated unauthorized');
+      return Errors.tokenExpired('Simulated token expiry — refresh and retry.');
 
     case 'forbidden':
-      return Errors.forbidden('Simulated forbidden');
+      return Errors.forbidden('Simulated forbidden — insufficient permissions.');
 
     case 'not_found':
-      return Errors.notFound('Simulated resource');
+      return Errors.notFound('Resource');
 
     case 'validation':
-      return Errors.validation('Simulated validation error', {
-        field: 'example',
-        rule: 'required',
+      return Errors.validation('The given data was invalid.', {
+        email: ['The email field is required.', 'The email must be valid.'],
+        password: ['The password must be at least 8 characters.'],
       });
 
     case 'maintenance':
-      return errorResponse({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Server is under maintenance',
-        status: 503,
-      });
+      return Errors.maintenance(
+        'We are upgrading our systems. Please try again in 30 minutes.'
+      );
 
     case 'rate_limit':
-      return errorResponse({
-        code: 'RATE_LIMITED',
-        message: 'Too many requests. Please try again later.',
-        status: 429,
-      });
+      return Errors.rateLimit(30);
+
+    case 'force_update':
+      return Errors.forceUpdate(
+        'A required update is available. Please update to continue.'
+      );
 
     default:
+      // Unknown scenario name — fall through to normal handling.
       return null;
   }
 }
 
 /**
- * Check if current scenario is 'empty'
+ * Check if current request is the `empty` scenario — each route handler should
+ * short-circuit to an empty-but-well-shaped list response.
  */
 export function isEmptyScenario(request: NextRequest): boolean {
   const { searchParams } = new URL(request.url);

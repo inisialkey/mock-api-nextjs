@@ -1,0 +1,2496 @@
+openapi: 3.1.0
+
+info:
+  title: MockApp API
+  version: 1.2.0
+  description: |
+    Production-ready REST API for **MockApp**, a modern Flutter mobile application.
+
+    - **Response envelope:** every JSON response uses `{ success, message, data | errors, … }`.
+    - **Auth:** JWT access token (15 min target, 7 d in this mock) + 30-day refresh token.
+    - **Pagination:** `page` / `limit` query params; `meta` block in response.
+    - **Edge cases:** append `?scenario=error|validation|unauthorized|forbidden|not_found|maintenance|rate_limit|force_update|empty|slow|very_slow|timeout` to any endpoint.
+
+    See `00-overview.md` for full conventions and rationale.
+
+    **Fixed test accounts** (stable across reseeds):
+    ```
+    admin@mock.com / password123
+    user@mock.com  / password123
+    ```
+  contact:
+    name: MockApp Team
+    email: dev@mockapp.com
+    url: https://github.com/mockapp/mock-api-nextjs
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local Next.js mock server (current code paths)
+  - url: http://localhost:3001/api/v1
+    description: Local Mockoon mock server (target /v1 paths)
+  - url: https://mock.mockapp.com/api/v1
+    description: Hosted mock (staging)
+
+tags:
+  - name: Auth
+    description: Registration, login, token refresh, logout, current user.
+  - name: Users
+    description: User directory and profile management.
+  - name: Products
+    description: Product catalog with search, filter, sort, pagination.
+  - name: Notifications
+    description: User notification inbox.
+  - name: Chat
+    description: Chat rooms and message history (REST). Real-time via Socket.IO — see Chat WebSocket events.
+  - name: Config
+    description: Remote configuration, feature flags, force update, maintenance.
+  - name: Upload
+    description: File upload endpoints.
+  - name: Categories
+    description: Product categories (public).
+  - name: Addresses
+    description: Authenticated user's shipping addresses.
+  - name: Cart
+    description: Authenticated user's shopping cart.
+  - name: Orders
+    description: Authenticated user's orders.
+  - name: System
+    description: Health and operational endpoints.
+  - name: WebSocket
+    description: REST-triggered WebSocket emission (admin / system).
+
+security:
+  - BearerAuth: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ─── AUTH ─────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: Creates a new user account and returns an access/refresh token pair.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AppVersionHeader'
+        - $ref: '#/components/parameters/AppPlatformHeader'
+        - $ref: '#/components/parameters/ScenarioParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            examples:
+              valid:
+                summary: Valid registration
+                value:
+                  name: Andi Wijaya
+                  email: andi@example.com
+                  password: secret123
+                  phone: "+6281234567892"
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSuccessResponse' }
+              examples:
+                created:
+                  $ref: '#/components/examples/AuthSuccessExample'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                conflict:
+                  value:
+                    success: false
+                    message: Email already registered.
+                    errors: null
+                    error_code: RESOURCE_ALREADY_EXISTS
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      description: |
+        Exchanges credentials for a token pair. Use the returned `access_token`
+        in `Authorization: Bearer <token>` for subsequent requests.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AppVersionHeader'
+        - $ref: '#/components/parameters/AppPlatformHeader'
+        - $ref: '#/components/parameters/ScenarioParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            examples:
+              admin:
+                summary: Admin login
+                value: { email: admin@mock.com, password: password123 }
+              user:
+                summary: Regular user login
+                value: { email: user@mock.com, password: password123 }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSuccessResponse' }
+              examples:
+                success:
+                  $ref: '#/components/examples/AuthSuccessExample'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                invalid_credentials:
+                  value:
+                    success: false
+                    message: Invalid email or password.
+                    errors: null
+                    error_code: AUTH_INVALID_CREDENTIALS
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+        '403':
+          description: Account disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                disabled:
+                  value:
+                    success: false
+                    message: Your account has been disabled. Contact support.
+                    errors: null
+                    error_code: AUTH_ACCOUNT_DISABLED
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      description: |
+        Exchange a valid refresh token for a new access/refresh token pair.
+        Implements **rotation**: the old refresh token is invalidated.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      responses:
+        '200':
+          description: Token pair rotated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/TokenPair' }
+              examples:
+                rotated:
+                  value:
+                    success: true
+                    message: Token refreshed.
+                    data:
+                      access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.NEW.access
+                      refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.NEW.refresh
+                      token_type: Bearer
+                      expires_in: 900
+        '401':
+          description: Refresh token invalid or revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                invalid:
+                  value:
+                    success: false
+                    message: Refresh token is invalid or has been revoked.
+                    errors: null
+                    error_code: AUTH_REFRESH_TOKEN_INVALID
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke refresh token)
+      description: Revokes the current refresh token. Access token expires naturally.
+      responses:
+        '204':
+          description: Logged out
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      parameters:
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+              examples:
+                me:
+                  value:
+                    success: true
+                    message: Profile retrieved.
+                    data:
+                      id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                      name: Test User
+                      email: user@mock.com
+                      phone: "+6281234567891"
+                      avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+                      role: user
+                      is_active: true
+                      created_at: "2025-08-12T10:23:11Z"
+                      updated_at: "2026-04-30T08:14:00Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ─── USERS ────────────────────────────────────────────────────────────────
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      description: Paginated list of users. Public (no auth required).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - { name: search, in: query, schema: { type: string }, description: Free-text search on name & email }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
+              examples:
+                list:
+                  $ref: '#/components/examples/UserListExample'
+
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: User detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+              examples:
+                user:
+                  $ref: '#/components/examples/UserDetailExample'
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Users]
+      summary: Update user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Users]
+      summary: Delete user
+      responses:
+        '204':
+          description: User deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── PRODUCTS ─────────────────────────────────────────────────────────────
+
+  /products:
+    get:
+      tags: [Products]
+      summary: List products
+      description: |
+        Paginated product list with rich filtering. Public (no auth).
+
+        Supports filtering by category, price range, stock, and free-text search.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - { name: search, in: query, schema: { type: string }, description: Search on name & description }
+        - { name: category, in: query, schema: { type: string, enum: [electronics, fashion, food, health, sports, books, home] } }
+        - { name: min_price, in: query, schema: { type: number } }
+        - { name: max_price, in: query, schema: { type: number } }
+        - { name: in_stock, in: query, schema: { type: boolean }, description: Only products with stock > 0 }
+        - { name: sort, in: query, schema: { type: string, enum: [name, price, rating, created_at, stock], default: created_at } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Product' }
+              examples:
+                list:
+                  $ref: '#/components/examples/ProductListExample'
+                empty:
+                  summary: Empty result (?scenario=empty)
+                  value:
+                    success: true
+                    message: No products found.
+                    data: []
+                    meta: { page: 1, limit: 20, total: 0, total_pages: 0, has_next: false, has_prev: false }
+    post:
+      tags: [Products]
+      summary: Create product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+            examples:
+              valid:
+                value:
+                  name: Wireless Headphones
+                  description: Premium noise-cancelling over-ear headphones.
+                  price: 2500000
+                  discount_price: 1999000
+                  category: electronics
+                  stock: 50
+                  image: https://picsum.photos/seed/headphones/400/400
+                  images:
+                    - https://picsum.photos/seed/h1/400/400
+                    - https://picsum.photos/seed/h2/400/400
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Products]
+      summary: Get product by ID
+      security: []
+      responses:
+        '200':
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+              examples:
+                product:
+                  $ref: '#/components/examples/ProductDetailExample'
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Products]
+      summary: Update product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Products]
+      summary: Delete product
+      responses:
+        '204':
+          description: Product deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── NOTIFICATIONS ────────────────────────────────────────────────────────
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for current user
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - { name: type, in: query, schema: { type: string, enum: [general, promo, order, system] } }
+        - { name: is_read, in: query, schema: { type: boolean }, description: Filter by read status }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Paginated notification list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Notification' }
+                      unread_count:
+                        type: integer
+                        description: Total unread across all pages.
+                        example: 12
+              examples:
+                list:
+                  $ref: '#/components/examples/NotificationListExample'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notifications/{id}/read:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Notifications]
+      summary: Mark a single notification as read
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      responses:
+        '200':
+          description: All marked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          marked_count: { type: integer, example: 12 }
+              examples:
+                ok:
+                  value:
+                    success: true
+                    message: 12 notifications marked as read.
+                    data: { marked_count: 12 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ─── CHAT ─────────────────────────────────────────────────────────────────
+
+  /chat/rooms:
+    get:
+      tags: [Chat]
+      summary: List the current user's chat rooms
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Rooms the user is a member of
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChatRoom' }
+              examples:
+                rooms:
+                  $ref: '#/components/examples/ChatRoomListExample'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Chat]
+      summary: Create a chat room
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, member_ids]
+              properties:
+                name: { type: string, example: Tim Mobile Dev }
+                type: { type: string, enum: [private, group] }
+                member_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  minItems: 1
+      responses:
+        '201':
+          description: Room created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ChatRoom' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /chat/rooms/{id}/messages:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Chat]
+      summary: Get chat room message history
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - { name: before, in: query, schema: { type: string, format: date-time }, description: Cursor — return messages created before this timestamp }
+      responses:
+        '200':
+          description: Paginated message history (newest first)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChatMessage' }
+              examples:
+                history:
+                  $ref: '#/components/examples/ChatMessageListExample'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── CONFIG ───────────────────────────────────────────────────────────────
+
+  /config:
+    get:
+      tags: [Config]
+      summary: Get remote config bundle (configs + flags + force-update + maintenance)
+      description: |
+        Single bundled endpoint mobile clients call on app start. Returns:
+        - **configs**: key-value app settings
+        - **feature_flags**: evaluated booleans (per-user, per-platform, per-version)
+        - **force_update**: whether the current app version must update
+        - **maintenance**: maintenance mode status
+      security: []
+      parameters:
+        - { name: platform, in: query, schema: { type: string, enum: [all, ios, android], default: all } }
+        - { name: app_version, in: query, schema: { type: string, example: "2.0.0" } }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Remote config bundle
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ConfigBundle' }
+              examples:
+                bundle:
+                  $ref: '#/components/examples/ConfigBundleExample'
+
+    put:
+      tags: [Config]
+      summary: Update a single config key (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, value]
+              properties:
+                key: { type: string, example: pagination_limit }
+                value: { description: Any JSON-compatible value }
+                type: { type: string, enum: [string, number, boolean, json], default: string }
+                description: { type: string }
+                platform: { type: string, enum: [all, ios, android], default: all }
+      responses:
+        '200':
+          description: Config updated
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /config/feature-flags:
+    get:
+      tags: [Config]
+      summary: List feature flag definitions (admin)
+      responses:
+        '200':
+          description: Feature flag definitions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/FeatureFlagDefinition' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /config/force-update:
+    get:
+      tags: [Config]
+      summary: Check force-update requirement
+      security: []
+      parameters:
+        - { name: platform, in: query, required: true, schema: { type: string, enum: [ios, android] } }
+        - { name: app_version, in: query, required: true, schema: { type: string, example: "1.4.0" } }
+      responses:
+        '200':
+          description: Force-update payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ForceUpdate' }
+              examples:
+                required:
+                  summary: Update required
+                  value:
+                    success: true
+                    message: Force-update check complete.
+                    data:
+                      current_version: "2.1.0"
+                      min_version: "1.5.0"
+                      update_url: https://play.google.com/store/apps/details?id=com.mockapp
+                      release_notes: Bug fixes, performance improvements, new checkout experience.
+                      is_force: true
+                      needs_update: true
+        '426':
+          description: Force update required (alternative status-code-driven flow)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                force:
+                  value:
+                    success: false
+                    message: A required update is available. Please update to continue.
+                    errors: null
+                    error_code: FORCE_UPDATE_REQUIRED
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  /config/maintenance:
+    get:
+      tags: [Config]
+      summary: Get maintenance mode status
+      security: []
+      parameters:
+        - { name: app_version, in: query, schema: { type: string, example: "2.1.0" } }
+      responses:
+        '200':
+          description: Maintenance status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Maintenance' }
+              examples:
+                inactive:
+                  value:
+                    success: true
+                    message: Maintenance status retrieved.
+                    data:
+                      is_active: false
+                      title: null
+                      message: null
+                      start_at: null
+                      end_at: null
+                active:
+                  summary: Maintenance active
+                  value:
+                    success: true
+                    message: Maintenance status retrieved.
+                    data:
+                      is_active: true
+                      title: Scheduled Maintenance
+                      message: We are upgrading our payment systems. Please try again in 30 minutes.
+                      start_at: "2026-05-12T14:00:00Z"
+                      end_at: "2026-05-12T14:30:00Z"
+
+  # ─── UPLOAD ───────────────────────────────────────────────────────────────
+
+  /upload:
+    post:
+      tags: [Upload]
+      summary: Upload a file
+      description: |
+        Accepts a single file (`multipart/form-data`). Max size: 10 MB.
+        Supported types: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Upload' }
+              examples:
+                uploaded:
+                  value:
+                    success: true
+                    message: File uploaded.
+                    data:
+                      id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                      filename: 9c858901-8a57-4791-81fe-4c455b099bc9.jpg
+                      original_name: profile.jpg
+                      mime_type: image/jpeg
+                      size: 184230
+                      url: http://localhost:3000/uploads/9c858901-8a57-4791-81fe-4c455b099bc9.jpg
+                      created_at: "2026-05-12T14:23:45Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                too_large:
+                  value:
+                    success: false
+                    message: File exceeds the 10 MB upload limit.
+                    errors: null
+                    error_code: FILE_TOO_LARGE
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+        '415':
+          description: Unsupported media type
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                bad_type:
+                  value:
+                    success: false
+                    message: Unsupported file type.
+                    errors: null
+                    error_code: UNSUPPORTED_MEDIA_TYPE
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  # ─── SYSTEM ───────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status: { type: string, example: ok }
+                          uptime_seconds: { type: integer, example: 187324 }
+                          version: { type: string, example: "1.2.0" }
+                          timestamp: { type: string, format: date-time }
+              examples:
+                ok:
+                  value:
+                    success: true
+                    message: Service is healthy.
+                    data:
+                      status: ok
+                      uptime_seconds: 187324
+                      version: "1.2.0"
+                      timestamp: "2026-05-12T14:23:45Z"
+
+  # ─── CATEGORIES ───────────────────────────────────────────────────────────
+
+  /categories:
+    get:
+      tags: [Categories]
+      summary: List categories
+      description: Public. Pass `?parent_id=root` for top-level categories only.
+      security: []
+      parameters:
+        - { name: parent_id, in: query, schema: { type: string }, description: "Filter by parent. Use `root` or empty for top-level only." }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Categories
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Category' }
+              examples:
+                list:
+                  value:
+                    success: true
+                    message: Categories retrieved.
+                    data:
+                      - id: cat-11111111-1111-1111-1111-111111111111
+                        slug: electronics
+                        name: Electronics
+                        description: Phones, laptops, gadgets, and accessories.
+                        icon: devices
+                        image_url: https://picsum.photos/seed/electronics/600/400
+                        parent_id: null
+                        sort_order: 1
+                        is_active: true
+                        created_at: "2026-01-01T00:00:00Z"
+                        updated_at: "2026-01-01T00:00:00Z"
+                      - id: cat-22222222-2222-2222-2222-222222222222
+                        slug: fashion
+                        name: Fashion
+                        description: Clothing, footwear, and accessories.
+                        icon: checkroom
+                        image_url: https://picsum.photos/seed/fashion/600/400
+                        parent_id: null
+                        sort_order: 2
+                        is_active: true
+                        created_at: "2026-01-01T00:00:00Z"
+                        updated_at: "2026-01-01T00:00:00Z"
+
+  /categories/{slug}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string }, example: electronics }
+    get:
+      tags: [Categories]
+      summary: Get category by slug
+      description: Includes `products_count` for live count of active products in the category.
+      security: []
+      responses:
+        '200':
+          description: Category detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/Category'
+                          - type: object
+                            properties:
+                              products_count: { type: integer, example: 9 }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── ADDRESSES ────────────────────────────────────────────────────────────
+
+  /addresses:
+    get:
+      tags: [Addresses]
+      summary: List the current user's addresses
+      description: Default address first, then most recently created.
+      responses:
+        '200':
+          description: Addresses
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Address' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Addresses]
+      summary: Create a new address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAddressRequest' }
+            examples:
+              valid:
+                value:
+                  label: Home
+                  recipient_name: Test User
+                  phone: "+6281234567891"
+                  street: Jl. Asia Afrika No. 158
+                  city: Bandung
+                  province: Jawa Barat
+                  postal_code: "40112"
+                  country: ID
+                  notes: Pagar hijau, samping warung
+                  is_default: true
+                  latitude: -6.9217
+                  longitude: 107.6045
+      responses:
+        '201':
+          description: Address created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Address' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /addresses/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Addresses]
+      summary: Get an address
+      responses:
+        '200':
+          description: Address
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Address' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Addresses]
+      summary: Update an address (partial)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAddressRequest' }
+      responses:
+        '200':
+          description: Address updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Address' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Addresses]
+      summary: Delete an address
+      description: If the deleted address was the default, the most recent remaining address is promoted automatically.
+      responses:
+        '200':
+          description: Deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /addresses/{id}/default:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Addresses]
+      summary: Set this address as the default
+      responses:
+        '200':
+          description: Default updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Address' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── CART ─────────────────────────────────────────────────────────────────
+
+  /cart:
+    get:
+      tags: [Cart]
+      summary: Get the current user's cart (items + computed summary)
+      responses:
+        '200':
+          description: Cart
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CartResponse' }
+              examples:
+                cart:
+                  value:
+                    success: true
+                    message: Cart retrieved.
+                    data:
+                      items:
+                        - id: ci-aaaa
+                          product_id: a1b2c3d4-1111-2222-3333-444455556666
+                          product:
+                            id: a1b2c3d4-1111-2222-3333-444455556666
+                            name: Wireless Bluetooth Headphones
+                            image: https://picsum.photos/seed/headphones/400/400
+                            price: 2500000
+                            discount_price: 1999000
+                            stock: 47
+                            is_active: true
+                          quantity: 2
+                          unit_price: 1999000
+                          subtotal: 3998000
+                          currency: IDR
+                          added_at: "2026-05-12T15:00:00Z"
+                          updated_at: "2026-05-12T15:00:00Z"
+                      summary:
+                        item_count: 2
+                        unique_items: 1
+                        subtotal: 3998000
+                        currency: IDR
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [Cart]
+      summary: Clear the cart
+      responses:
+        '204':
+          description: Cart cleared
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cart/items:
+    post:
+      tags: [Cart]
+      summary: Add a product to the cart
+      description: If the product is already in the cart, the existing quantity is incremented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1, default: 1 }
+      responses:
+        '201':
+          description: Item added (or quantity incremented)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CartItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Out of stock or invalid quantity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                stock:
+                  value:
+                    success: false
+                    message: Not enough stock.
+                    errors:
+                      quantity: ["Only 5 item(s) available."]
+                    error_code: VALIDATION_ERROR
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  /cart/items/{product_id}:
+    parameters:
+      - { name: product_id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Cart]
+      summary: Set the cart line quantity to an exact value
+      description: A `quantity` of `0` removes the line (returns 204).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Cart line updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CartItem' }
+        '204':
+          description: Quantity set to 0 — line removed
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Cart]
+      summary: Remove a single line from the cart
+      responses:
+        '204':
+          description: Line removed
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── ORDERS ───────────────────────────────────────────────────────────────
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List the current user's orders
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - { name: status, in: query, schema: { type: string, enum: [pending, confirmed, processing, shipped, out_for_delivery, delivered, cancelled, refunded] } }
+        - $ref: '#/components/parameters/ScenarioParam'
+      responses:
+        '200':
+          description: Paginated orders (newest first)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedSuccessBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Orders]
+      summary: Place a new order from the current cart
+      description: |
+        Atomically: validates stock for each cart line, creates the order with an
+        immutable address snapshot, copies cart lines into `order_items`, and clears
+        the cart. The order starts in `pending` status with `payment_status: pending`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipping_address_id, payment_method]
+              properties:
+                shipping_address_id: { type: string, format: uuid }
+                payment_method:
+                  type: string
+                  enum: [bank_transfer, credit_card, e_wallet, cod]
+                notes: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Order placed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Shipping address not found (or not yours)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: Empty cart or stock issue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                empty_cart:
+                  value:
+                    success: false
+                    message: Your cart is empty.
+                    errors:
+                      cart: ["Add at least one item before placing an order."]
+                    error_code: VALIDATION_ERROR
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  /orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: "Accepts either the UUID `id` or the public `reference` (e.g. `ORD-2026-00153`)." }
+    get:
+      tags: [Orders]
+      summary: Get an order with items
+      responses:
+        '200':
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Orders]
+      summary: Cancel an order
+      description: |
+        Allowed only when the order is in `pending` or `confirmed` status. If the
+        order was already paid, `payment_status` becomes `refunded`; otherwise `failed`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, example: "Changed my mind" }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Order is not in a cancellable status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                bad_status:
+                  value:
+                    success: false
+                    message: Order cannot be cancelled from status "shipped".
+                    errors:
+                      status: ["Only orders in pending or confirmed can be cancelled."]
+                    error_code: VALIDATION_ERROR
+                    request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  /ws/emit:
+    post:
+      tags: [WebSocket]
+      summary: Trigger a WebSocket event from REST (admin)
+      description: |
+        Allows admins / system jobs to push a real-time event to connected clients.
+        See `flutter-integration-guide.md` for the full list of Socket.IO events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, target]
+              properties:
+                event: { type: string, example: notification:new }
+                target:
+                  type: object
+                  properties:
+                    type: { type: string, enum: [user, room, channel, broadcast] }
+                    id: { type: string, description: User ID, room ID, or channel name }
+                payload: { type: object }
+      responses:
+        '202':
+          description: Event accepted for emission
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          emitted: { type: boolean, example: true }
+                          recipients: { type: integer, example: 12 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token in `Authorization: Bearer <token>`.
+        Obtain via `POST /auth/login` or `POST /auth/register`.
+        On `401 AUTH_TOKEN_EXPIRED`, refresh via `POST /auth/refresh`.
+
+  # ─── Parameters ──────────────────────────────────────────────────────────
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+      description: 1-indexed page number.
+    LimitParam:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      description: Items per page (max 100).
+    ScenarioParam:
+      name: scenario
+      in: query
+      schema:
+        type: string
+        enum:
+          - error
+          - validation
+          - unauthorized
+          - forbidden
+          - not_found
+          - maintenance
+          - rate_limit
+          - force_update
+          - empty
+          - slow
+          - very_slow
+          - timeout
+      description: |
+        Force an edge-case response. Use during mobile QA to drive error UI without
+        server-side changes.
+    AppVersionHeader:
+      name: X-App-Version
+      in: header
+      schema: { type: string, example: "2.1.0" }
+      description: Mobile app semantic version. Drives version-gated feature flags & force update.
+    AppPlatformHeader:
+      name: X-App-Platform
+      in: header
+      schema: { type: string, enum: [ios, android] }
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      schema: { type: string }
+      description: Client-supplied correlation ID. Server generates one if missing and echoes in response headers.
+
+  # ─── Reusable error responses ────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or expired access token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            expired:
+              summary: Token expired
+              value:
+                success: false
+                message: Your session has expired. Please sign in again.
+                errors: null
+                error_code: AUTH_TOKEN_EXPIRED
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+            missing:
+              summary: Missing token
+              value:
+                success: false
+                message: Authentication required.
+                errors: null
+                error_code: AUTH_TOKEN_INVALID
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    Forbidden:
+      description: Authenticated but lacks permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            forbidden:
+              value:
+                success: false
+                message: You don't have permission to perform this action.
+                errors: null
+                error_code: AUTHORIZATION_FORBIDDEN
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            not_found:
+              value:
+                success: false
+                message: The requested resource was not found.
+                errors: null
+                error_code: RESOURCE_NOT_FOUND
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    ValidationError:
+      description: Validation error (field-level details in `errors`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            validation:
+              value:
+                success: false
+                message: The given data was invalid.
+                errors:
+                  email: ["The email field is required.", "The email must be valid."]
+                  password: ["The password must be at least 8 characters."]
+                error_code: VALIDATION_ERROR
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    RateLimit:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer, example: 30 }
+          description: Seconds to wait before retrying.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            rate_limit:
+              value:
+                success: false
+                message: Too many requests. Please try again in 30 seconds.
+                errors: null
+                error_code: RATE_LIMIT_EXCEEDED
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    Maintenance:
+      description: Maintenance mode active
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            maintenance:
+              value:
+                success: false
+                message: We are upgrading our systems. Please try again shortly.
+                errors: null
+                error_code: MAINTENANCE_MODE
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          examples:
+            internal:
+              value:
+                success: false
+                message: Something went wrong on our end. Please try again.
+                errors: null
+                error_code: INTERNAL_SERVER_ERROR
+                request_id: req_01HF3XK2N7A8YBPQ4ZM
+
+  # ─── Schemas ─────────────────────────────────────────────────────────────
+
+  schemas:
+
+    # Envelope bases ---------------------------------------------------------
+
+    SuccessResponseBase:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string, example: Success }
+        data: {}  # narrowed per endpoint
+      additionalProperties: false
+
+    PaginatedSuccessBase:
+      type: object
+      required: [success, message, data, meta]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data: { type: array }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+      additionalProperties: false
+
+    ErrorResponse:
+      type: object
+      required: [success, message, errors, error_code, request_id]
+      properties:
+        success: { type: boolean, const: false }
+        message:
+          type: string
+          example: The given data was invalid.
+        errors:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties:
+                type: array
+                items: { type: string }
+          example:
+            email: ["The email field is required."]
+        error_code:
+          type: string
+          enum:
+            - BAD_REQUEST
+            - AUTH_INVALID_CREDENTIALS
+            - AUTH_TOKEN_EXPIRED
+            - AUTH_TOKEN_INVALID
+            - AUTH_REFRESH_TOKEN_INVALID
+            - AUTH_ACCOUNT_DISABLED
+            - AUTHORIZATION_FORBIDDEN
+            - RESOURCE_NOT_FOUND
+            - RESOURCE_ALREADY_EXISTS
+            - FILE_TOO_LARGE
+            - UNSUPPORTED_MEDIA_TYPE
+            - VALIDATION_ERROR
+            - FORCE_UPDATE_REQUIRED
+            - RATE_LIMIT_EXCEEDED
+            - MAINTENANCE_MODE
+            - INTERNAL_SERVER_ERROR
+        request_id:
+          type: string
+          example: req_01HF3XK2N7A8YBPQ4ZM
+
+    PaginationMeta:
+      type: object
+      required: [page, limit, total, total_pages, has_next, has_prev]
+      properties:
+        page: { type: integer, minimum: 1, example: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100, example: 20 }
+        total: { type: integer, minimum: 0, example: 153 }
+        total_pages: { type: integer, minimum: 0, example: 8 }
+        has_next: { type: boolean, example: true }
+        has_prev: { type: boolean, example: false }
+
+    # Auth -------------------------------------------------------------------
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: user@mock.com }
+        password: { type: string, format: password, minLength: 6, example: password123 }
+
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 2, example: Andi Wijaya }
+        email: { type: string, format: email, example: andi@example.com }
+        password: { type: string, format: password, minLength: 6, example: secret123 }
+        phone: { type: string, example: "+6281234567892" }
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string, example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.access }
+        refresh_token: { type: string, example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.refresh }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, description: Access token lifetime in seconds, example: 900 }
+
+    AuthSuccessResponse:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data:
+          type: object
+          required: [user, access_token, refresh_token]
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+            access_token: { type: string }
+            refresh_token: { type: string }
+            token_type: { type: string, const: Bearer }
+            expires_in: { type: integer, example: 900 }
+
+    # User -------------------------------------------------------------------
+
+    User:
+      type: object
+      required: [id, name, email, role, is_active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Test User }
+        email: { type: string, format: email, example: user@mock.com }
+        phone: { type: string, nullable: true, example: "+6281234567891" }
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+          example: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+        role: { type: string, enum: [user, admin] }
+        is_active: { type: boolean, example: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        avatar_url: { type: string, format: uri }
+
+    # Product ----------------------------------------------------------------
+
+    Product:
+      type: object
+      required: [id, name, price, category, currency, stock, rating, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Wireless Headphones }
+        description: { type: string, nullable: true }
+        price: { type: number, example: 2500000 }
+        discount_price: { type: number, nullable: true, example: 1999000 }
+        currency: { type: string, example: IDR }
+        category:
+          type: string
+          enum: [electronics, fashion, food, health, sports, books, home]
+        image: { type: string, format: uri, nullable: true }
+        images:
+          type: array
+          items: { type: string, format: uri }
+        stock: { type: integer, minimum: 0, example: 50 }
+        rating: { type: number, minimum: 0, maximum: 5, example: 4.5 }
+        rating_count: { type: integer, minimum: 0, example: 248 }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateProductRequest:
+      type: object
+      required: [name, price, category]
+      properties:
+        name: { type: string, minLength: 2 }
+        description: { type: string }
+        price: { type: number, minimum: 0 }
+        discount_price: { type: number, minimum: 0, nullable: true }
+        category: { type: string, enum: [electronics, fashion, food, health, sports, books, home] }
+        image: { type: string, format: uri }
+        images:
+          type: array
+          items: { type: string, format: uri }
+        stock: { type: integer, minimum: 0, default: 0 }
+
+    # Notification -----------------------------------------------------------
+
+    Notification:
+      type: object
+      required: [id, user_id, title, body, type, is_read, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: string }
+        type: { type: string, enum: [general, promo, order, system] }
+        data:
+          type: object
+          additionalProperties: true
+          description: Free-form payload (e.g., order_id, deep_link).
+        is_read: { type: boolean }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    # Chat -------------------------------------------------------------------
+
+    ChatRoom:
+      type: object
+      required: [id, type, members, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, nullable: true, example: Tim Mobile Dev }
+        type: { type: string, enum: [private, group] }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/ChatRoomMember' }
+        last_message: { $ref: '#/components/schemas/ChatMessage' }
+        unread_count: { type: integer, example: 3 }
+        created_at: { type: string, format: date-time }
+
+    ChatRoomMember:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        avatar_url: { type: string, format: uri, nullable: true }
+        joined_at: { type: string, format: date-time }
+
+    ChatMessage:
+      type: object
+      required: [id, room_id, sender_id, content, type, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        room_id: { type: string, format: uuid }
+        sender_id: { type: string, format: uuid }
+        sender_name: { type: string }
+        content: { type: string }
+        type: { type: string, enum: [text, image, file] }
+        created_at: { type: string, format: date-time }
+
+    # Config -----------------------------------------------------------------
+
+    ConfigBundle:
+      type: object
+      required: [configs, feature_flags, force_update, maintenance]
+      properties:
+        configs:
+          type: object
+          additionalProperties: true
+          description: Free-form key-value config entries.
+        feature_flags:
+          type: object
+          additionalProperties: { type: boolean }
+        feature_flags_detail:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/FeatureFlagEvaluation' }
+        force_update: { $ref: '#/components/schemas/ForceUpdate' }
+        maintenance: { $ref: '#/components/schemas/Maintenance' }
+
+    FeatureFlagEvaluation:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        description: { type: string, nullable: true }
+        min_version: { type: string, nullable: true }
+        max_version: { type: string, nullable: true }
+
+    FeatureFlagDefinition:
+      type: object
+      properties:
+        key: { type: string, example: dark_mode }
+        enabled: { type: boolean }
+        description: { type: string, nullable: true }
+        platform: { type: string, enum: [all, ios, android] }
+        min_version: { type: string, nullable: true }
+        max_version: { type: string, nullable: true }
+        user_percentage: { type: integer, minimum: 0, maximum: 100 }
+        whitelist_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    ForceUpdate:
+      type: object
+      properties:
+        current_version: { type: string, example: "2.1.0" }
+        min_version: { type: string, example: "1.5.0" }
+        update_url: { type: string, format: uri, example: "https://play.google.com/store/apps/details?id=com.mockapp" }
+        release_notes: { type: string, nullable: true }
+        is_force: { type: boolean, example: true }
+        needs_update: { type: boolean, example: false }
+
+    Maintenance:
+      type: object
+      properties:
+        is_active: { type: boolean }
+        title: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+        start_at: { type: string, format: date-time, nullable: true }
+        end_at: { type: string, format: date-time, nullable: true }
+
+    # Categories -------------------------------------------------------------
+
+    Category:
+      type: object
+      required: [id, slug, name, sort_order, is_active, created_at]
+      properties:
+        id:          { type: string, format: uuid }
+        slug:        { type: string, example: electronics }
+        name:        { type: string, example: Electronics }
+        description: { type: string, nullable: true }
+        icon:        { type: string, nullable: true, example: devices, description: "Material icon name; map to your asset on the client" }
+        image_url:   { type: string, format: uri, nullable: true }
+        parent_id:   { type: string, format: uuid, nullable: true }
+        sort_order:  { type: integer, example: 1 }
+        is_active:   { type: boolean }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    # Addresses --------------------------------------------------------------
+
+    Address:
+      type: object
+      required: [id, user_id, recipient_name, phone, street, city, province, postal_code, country, is_default, created_at]
+      properties:
+        id:             { type: string, format: uuid }
+        user_id:        { type: string, format: uuid }
+        label:          { type: string, nullable: true, example: Home }
+        recipient_name: { type: string, example: Test User }
+        phone:          { type: string, example: "+6281234567891" }
+        street:         { type: string, example: Jl. Asia Afrika No. 158 }
+        city:           { type: string, example: Bandung }
+        province:       { type: string, example: Jawa Barat }
+        postal_code:    { type: string, example: "40112" }
+        country:        { type: string, example: ID, description: "ISO 3166-1 alpha-2" }
+        notes:          { type: string, nullable: true }
+        is_default:     { type: boolean }
+        latitude:       { type: number, nullable: true, example: -6.9217 }
+        longitude:      { type: number, nullable: true, example: 107.6045 }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+
+    CreateAddressRequest:
+      type: object
+      required: [recipient_name, phone, street, city, province, postal_code]
+      properties:
+        label:          { type: string }
+        recipient_name: { type: string }
+        phone:          { type: string }
+        street:         { type: string }
+        city:           { type: string }
+        province:       { type: string }
+        postal_code:    { type: string }
+        country:        { type: string, default: ID }
+        notes:          { type: string }
+        is_default:     { type: boolean, default: false }
+        latitude:       { type: number }
+        longitude:      { type: number }
+
+    UpdateAddressRequest:
+      type: object
+      properties:
+        label:          { type: string }
+        recipient_name: { type: string }
+        phone:          { type: string }
+        street:         { type: string }
+        city:           { type: string }
+        province:       { type: string }
+        postal_code:    { type: string }
+        country:        { type: string }
+        notes:          { type: string }
+        is_default:     { type: boolean }
+        latitude:       { type: number }
+        longitude:      { type: number }
+
+    # Cart -------------------------------------------------------------------
+
+    CartItem:
+      type: object
+      required: [id, product_id, product, quantity, unit_price, subtotal, currency]
+      properties:
+        id:         { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product:
+          type: object
+          properties:
+            id:             { type: string, format: uuid }
+            name:           { type: string }
+            image:          { type: string, format: uri, nullable: true }
+            price:          { type: number }
+            discount_price: { type: number, nullable: true }
+            stock:          { type: integer }
+            is_active:      { type: boolean }
+        quantity:   { type: integer, minimum: 1 }
+        unit_price: { type: number, description: "Effective price (discount_price if set, otherwise price)" }
+        subtotal:   { type: number, description: "unit_price × quantity, rounded" }
+        currency:   { type: string, example: IDR }
+        added_at:   { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CartSummary:
+      type: object
+      required: [item_count, unique_items, subtotal, currency]
+      properties:
+        item_count:   { type: integer, description: "Total quantity across all lines" }
+        unique_items: { type: integer, description: "Number of distinct products" }
+        subtotal:     { type: number }
+        currency:     { type: string, example: IDR }
+
+    CartResponse:
+      type: object
+      required: [items, summary]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+        summary: { $ref: '#/components/schemas/CartSummary' }
+
+    # Orders -----------------------------------------------------------------
+
+    Order:
+      type: object
+      required: [id, reference, user_id, status, subtotal, shipping_fee, total, currency, payment_status, placed_at, items, item_count]
+      properties:
+        id:             { type: string, format: uuid }
+        reference:      { type: string, example: ORD-2026-00153, description: "Public-facing order number" }
+        user_id:        { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, confirmed, processing, shipped, out_for_delivery, delivered, cancelled, refunded]
+        subtotal:       { type: number }
+        shipping_fee:   { type: number }
+        discount:       { type: number }
+        tax:            { type: number }
+        total:          { type: number }
+        currency:       { type: string, example: IDR }
+        payment_method:
+          type: string
+          nullable: true
+          enum: [bank_transfer, credit_card, e_wallet, cod]
+        payment_status:
+          type: string
+          enum: [pending, paid, failed, refunded]
+        shipping_address_id: { type: string, format: uuid, nullable: true }
+        shipping_address:
+          $ref: '#/components/schemas/ShippingAddressSnapshot'
+        tracking_number:     { type: string, nullable: true, example: JNE-001-IDX-90A12 }
+        notes:               { type: string, nullable: true }
+        placed_at:           { type: string, format: date-time }
+        confirmed_at:        { type: string, format: date-time, nullable: true }
+        shipped_at:          { type: string, format: date-time, nullable: true }
+        delivered_at:        { type: string, format: date-time, nullable: true }
+        cancelled_at:        { type: string, format: date-time, nullable: true }
+        cancellation_reason: { type: string, nullable: true }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        item_count:          { type: integer, description: "Total quantity across all items" }
+        created_at:          { type: string, format: date-time }
+        updated_at:          { type: string, format: date-time }
+
+    OrderItem:
+      type: object
+      required: [id, product_name, quantity, unit_price, subtotal]
+      properties:
+        id:            { type: string, format: uuid }
+        product_id:    { type: string, format: uuid, nullable: true, description: "Null if the product was deleted after the order was placed" }
+        product_name:  { type: string, description: "Snapshotted at order time — immutable" }
+        product_image: { type: string, format: uri, nullable: true }
+        quantity:      { type: integer, minimum: 1 }
+        unit_price:    { type: number, description: "Snapshot of the effective price at order time" }
+        subtotal:      { type: number }
+
+    ShippingAddressSnapshot:
+      type: object
+      description: "Immutable snapshot of the address at order time. Decoupled from the live `addresses` row."
+      nullable: true
+      properties:
+        label:          { type: string, nullable: true }
+        recipient_name: { type: string }
+        phone:          { type: string }
+        street:         { type: string }
+        city:           { type: string }
+        province:       { type: string }
+        postal_code:    { type: string }
+        country:        { type: string }
+        notes:          { type: string, nullable: true }
+
+    # Upload -----------------------------------------------------------------
+
+    Upload:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        original_name: { type: string }
+        mime_type: { type: string, example: image/jpeg }
+        size: { type: integer, description: Size in bytes }
+        url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+
+  # ─── Reusable Examples ───────────────────────────────────────────────────
+
+  examples:
+
+    AuthSuccessExample:
+      summary: Successful auth (login or register)
+      value:
+        success: true
+        message: Login successful.
+        data:
+          user:
+            id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            name: Test User
+            email: user@mock.com
+            phone: "+6281234567891"
+            avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+            role: user
+            is_active: true
+            created_at: "2025-08-12T10:23:11Z"
+            updated_at: "2026-04-30T08:14:00Z"
+          access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjljODU4OTAxLTha.signature_access
+          refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjljODU4OTAxLTha.signature_refresh
+          token_type: Bearer
+          expires_in: 900
+
+    UserListExample:
+      summary: Paginated user list
+      value:
+        success: true
+        message: Users retrieved.
+        data:
+          - id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            name: Admin User
+            email: admin@mock.com
+            phone: "+6281234567890"
+            avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=admin
+            role: admin
+            is_active: true
+            created_at: "2025-08-12T10:23:11Z"
+            updated_at: "2025-08-12T10:23:11Z"
+          - id: 7e6a3c0f-1b2d-4e9a-9c1f-5a8b0d4e3f12
+            name: Test User
+            email: user@mock.com
+            phone: "+6281234567891"
+            avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+            role: user
+            is_active: true
+            created_at: "2025-08-12T10:24:00Z"
+            updated_at: "2026-04-30T08:14:00Z"
+        meta:
+          page: 1
+          limit: 20
+          total: 32
+          total_pages: 2
+          has_next: true
+          has_prev: false
+
+    UserDetailExample:
+      summary: Single user detail
+      value:
+        success: true
+        message: User retrieved.
+        data:
+          id: 9c858901-8a57-4791-81fe-4c455b099bc9
+          name: Admin User
+          email: admin@mock.com
+          phone: "+6281234567890"
+          avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=admin
+          role: admin
+          is_active: true
+          created_at: "2025-08-12T10:23:11Z"
+          updated_at: "2025-08-12T10:23:11Z"
+
+    ProductListExample:
+      summary: Paginated product list
+      value:
+        success: true
+        message: Products retrieved.
+        data:
+          - id: a1b2c3d4-1111-2222-3333-444455556666
+            name: Wireless Bluetooth Headphones
+            description: Premium noise-cancelling over-ear headphones with 30-hour battery.
+            price: 2500000
+            discount_price: 1999000
+            currency: IDR
+            category: electronics
+            image: https://picsum.photos/seed/headphones/400/400
+            images:
+              - https://picsum.photos/seed/h1/400/400
+              - https://picsum.photos/seed/h2/400/400
+              - https://picsum.photos/seed/h3/400/400
+            stock: 47
+            rating: 4.6
+            rating_count: 248
+            is_active: true
+            created_at: "2026-02-14T09:12:00Z"
+            updated_at: "2026-04-21T14:00:00Z"
+          - id: b2c3d4e5-2222-3333-4444-555566667777
+            name: Cotton T-Shirt Classic Fit
+            description: Soft 100% cotton, available in 6 colors.
+            price: 199000
+            discount_price: null
+            currency: IDR
+            category: fashion
+            image: https://picsum.photos/seed/tshirt/400/400
+            images:
+              - https://picsum.photos/seed/t1/400/400
+              - https://picsum.photos/seed/t2/400/400
+            stock: 312
+            rating: 4.3
+            rating_count: 89
+            is_active: true
+            created_at: "2026-03-02T08:00:00Z"
+            updated_at: "2026-04-30T11:24:00Z"
+          - id: c3d4e5f6-3333-4444-5555-666677778888
+            name: Stainless Steel Water Bottle 750ml
+            description: Vacuum-insulated, BPA-free, keeps drinks cold for 24h.
+            price: 285000
+            discount_price: 199000
+            currency: IDR
+            category: sports
+            image: https://picsum.photos/seed/bottle/400/400
+            images:
+              - https://picsum.photos/seed/b1/400/400
+            stock: 0
+            rating: 4.8
+            rating_count: 412
+            is_active: true
+            created_at: "2026-01-22T16:18:00Z"
+            updated_at: "2026-04-15T09:30:00Z"
+        meta:
+          page: 1
+          limit: 20
+          total: 50
+          total_pages: 3
+          has_next: true
+          has_prev: false
+
+    ProductDetailExample:
+      summary: Single product detail
+      value:
+        success: true
+        message: Product retrieved.
+        data:
+          id: a1b2c3d4-1111-2222-3333-444455556666
+          name: Wireless Bluetooth Headphones
+          description: Premium noise-cancelling over-ear headphones with 30-hour battery life and quick-charge capability.
+          price: 2500000
+          discount_price: 1999000
+          currency: IDR
+          category: electronics
+          image: https://picsum.photos/seed/headphones/400/400
+          images:
+            - https://picsum.photos/seed/h1/400/400
+            - https://picsum.photos/seed/h2/400/400
+            - https://picsum.photos/seed/h3/400/400
+          stock: 47
+          rating: 4.6
+          rating_count: 248
+          is_active: true
+          created_at: "2026-02-14T09:12:00Z"
+          updated_at: "2026-04-21T14:00:00Z"
+
+    NotificationListExample:
+      summary: Paginated notification list
+      value:
+        success: true
+        message: Notifications retrieved.
+        data:
+          - id: 11111111-1111-1111-1111-111111111111
+            user_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            title: "Order Confirmed"
+            body: "Your order #ORD-2026-00153 has been confirmed."
+            type: order
+            data: { order_id: "ORD-2026-00153", deep_link: "mockapp://orders/ORD-2026-00153" }
+            is_read: false
+            read_at: null
+            created_at: "2026-05-12T13:45:00Z"
+          - id: 22222222-2222-2222-2222-222222222222
+            user_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            title: "Flash Sale 🔥"
+            body: "Up to 70% off on electronics. Limited time only!"
+            type: promo
+            data: { campaign_id: "FLASH-MAY-2026", deep_link: "mockapp://promo/FLASH-MAY-2026" }
+            is_read: true
+            read_at: "2026-05-12T10:14:00Z"
+            created_at: "2026-05-12T08:00:00Z"
+        meta:
+          page: 1
+          limit: 20
+          total: 12
+          total_pages: 1
+          has_next: false
+          has_prev: false
+        unread_count: 8
+
+    ChatRoomListExample:
+      summary: Chat room list
+      value:
+        success: true
+        message: Chat rooms retrieved.
+        data:
+          - id: aaaa1111-1111-1111-1111-111111111111
+            name: null
+            type: private
+            members:
+              - user_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                name: Admin User
+                avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=admin
+                joined_at: "2025-08-12T10:23:11Z"
+              - user_id: 7e6a3c0f-1b2d-4e9a-9c1f-5a8b0d4e3f12
+                name: Test User
+                avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+                joined_at: "2025-08-12T10:24:00Z"
+            last_message:
+              id: msg-5
+              room_id: aaaa1111-1111-1111-1111-111111111111
+              sender_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+              sender_name: Admin User
+              content: "Kalau ada bug, langsung lapor ya 👍"
+              type: text
+              created_at: "2026-05-12T13:42:00Z"
+            unread_count: 0
+            created_at: "2025-08-12T10:24:00Z"
+          - id: bbbb2222-2222-2222-2222-222222222222
+            name: Tim Mobile Dev
+            type: group
+            members:
+              - user_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                name: Admin User
+                avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=admin
+                joined_at: "2025-08-12T10:23:11Z"
+              - user_id: 7e6a3c0f-1b2d-4e9a-9c1f-5a8b0d4e3f12
+                name: Test User
+                avatar_url: https://api.dicebear.com/7.x/avataaars/svg?seed=user
+                joined_at: "2025-08-12T10:24:00Z"
+            last_message:
+              id: msg-12
+              room_id: bbbb2222-2222-2222-2222-222222222222
+              sender_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+              sender_name: Admin User
+              content: "Good job team! 🚀"
+              type: text
+              created_at: "2026-05-12T11:00:00Z"
+            unread_count: 3
+            created_at: "2025-08-15T14:00:00Z"
+        meta:
+          page: 1
+          limit: 20
+          total: 2
+          total_pages: 1
+          has_next: false
+          has_prev: false
+
+    ChatMessageListExample:
+      summary: Chat message history (newest first)
+      value:
+        success: true
+        message: Messages retrieved.
+        data:
+          - id: msg-5
+            room_id: aaaa1111-1111-1111-1111-111111111111
+            sender_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            sender_name: Admin User
+            content: "Kalau ada bug, langsung lapor ya 👍"
+            type: text
+            created_at: "2026-05-12T13:42:00Z"
+          - id: msg-4
+            room_id: aaaa1111-1111-1111-1111-111111111111
+            sender_id: 7e6a3c0f-1b2d-4e9a-9c1f-5a8b0d4e3f12
+            sender_name: Test User
+            content: "Siap, saya cek sekarang"
+            type: text
+            created_at: "2026-05-12T13:41:00Z"
+          - id: msg-3
+            room_id: aaaa1111-1111-1111-1111-111111111111
+            sender_id: 9c858901-8a57-4791-81fe-4c455b099bc9
+            sender_name: Admin User
+            content: "Ada fitur baru lho, coba cek halaman produk"
+            type: text
+            created_at: "2026-05-12T13:40:00Z"
+        meta:
+          page: 1
+          limit: 20
+          total: 5
+          total_pages: 1
+          has_next: false
+          has_prev: false
+
+    ConfigBundleExample:
+      summary: Remote config bundle
+      value:
+        success: true
+        message: Remote config retrieved.
+        data:
+          configs:
+            app_name: MockApp
+            app_tagline: Your everyday companion
+            max_upload_size: 10485760
+            pagination_limit: 20
+            otp_timeout: 120
+            support_email: support@mockapp.com
+            support_phone: "+6281234567890"
+            support_whatsapp: https://wa.me/6281234567890
+            terms_url: https://mockapp.com/terms
+            privacy_url: https://mockapp.com/privacy
+            onboarding_enabled: true
+            max_cart_items: 50
+            currency: IDR
+            locale: id-ID
+          feature_flags:
+            dark_mode: true
+            new_checkout_flow: true
+            biometric_login: true
+            stories_feature: false
+            voice_search: false
+            live_chat_support: true
+            referral_program: true
+            product_recommendations: true
+            flash_sale_countdown: true
+          feature_flags_detail:
+            dark_mode:
+              enabled: true
+              description: Enable dark mode toggle
+              min_version: null
+              max_version: null
+            new_checkout_flow:
+              enabled: true
+              description: New checkout UI with stepper
+              min_version: "2.0.0"
+              max_version: null
+          force_update:
+            current_version: "2.1.0"
+            min_version: "1.5.0"
+            update_url: https://play.google.com/store/apps/details?id=com.mockapp
+            release_notes: Bug fixes, performance improvements, and new checkout experience.
+            is_force: true
+            needs_update: false
+          maintenance:
+            is_active: false
+            title: null
+            message: null
+            start_at: null
+            end_at: null

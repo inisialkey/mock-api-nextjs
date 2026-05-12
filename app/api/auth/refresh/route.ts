@@ -1,7 +1,13 @@
 import { NextRequest } from 'next/server';
 import { v4 as uuid } from 'uuid';
 import { getDb } from '@/lib/db';
-import { verifyToken, generateAccessToken, generateRefreshToken } from '@/lib/auth';
+import {
+  verifyToken,
+  generateAccessToken,
+  generateRefreshToken,
+  TOKEN_TYPE,
+  ACCESS_TOKEN_LIFETIME_SECONDS,
+} from '@/lib/auth';
 import { successResponse, Errors } from '@/lib/response';
 import { handleScenario } from '@/lib/scenario';
 
@@ -28,36 +34,41 @@ export async function POST(request: NextRequest) {
     const { refresh_token } = body;
 
     if (!refresh_token) {
-      return Errors.validation('refresh_token is required');
+      return Errors.validation('The given data was invalid.', {
+        refresh_token: ['The refresh_token field is required.'],
+      });
     }
 
-    // Verify JWT is valid
+    // Verify JWT signature & expiry
     const decoded = verifyToken(refresh_token);
     if (!decoded) {
-      return Errors.unauthorized('Invalid or expired refresh token');
+      return Errors.refreshTokenInvalid();
     }
 
     const db = getDb();
 
-    // Check if refresh token exists in DB
+    // Check token is still in DB (not rotated/revoked)
     const storedToken = db
       .prepare('SELECT * FROM refresh_tokens WHERE token = ?')
       .get(refresh_token) as RefreshTokenRow | undefined;
 
     if (!storedToken) {
-      return Errors.unauthorized('Refresh token not found');
+      return Errors.refreshTokenInvalid();
     }
 
-    // Check if user still active
-    const user = db.prepare('SELECT id, email, role, is_active FROM users WHERE id = ?').get(
-      decoded.id
-    ) as UserRow | undefined;
+    // Check user still active
+    const user = db
+      .prepare('SELECT id, email, role, is_active FROM users WHERE id = ?')
+      .get(decoded.id) as UserRow | undefined;
 
-    if (!user || !user.is_active) {
-      return Errors.unauthorized('User not found or inactive');
+    if (!user) {
+      return Errors.refreshTokenInvalid();
+    }
+    if (!user.is_active) {
+      return Errors.accountDisabled();
     }
 
-    // Rotate: delete old token, create new pair
+    // Rotate: invalidate old, issue new pair
     db.prepare('DELETE FROM refresh_tokens WHERE token = ?').run(refresh_token);
 
     const tokenPayload = { id: user.id, email: user.email, role: user.role };
@@ -73,8 +84,10 @@ export async function POST(request: NextRequest) {
       data: {
         access_token: new_access_token,
         refresh_token: new_refresh_token,
+        token_type: TOKEN_TYPE,
+        expires_in: ACCESS_TOKEN_LIFETIME_SECONDS,
       },
-      message: 'Token refreshed',
+      message: 'Token refreshed.',
     });
   } catch (error) {
     console.error('Refresh error:', error);
